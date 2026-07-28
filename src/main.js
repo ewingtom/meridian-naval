@@ -196,6 +196,7 @@ gameOverEl.querySelector('#gameover-restart').addEventListener('click', () => {
   playerShip.physics.heading = 0;
   throttleCmd = 0; rudderCmd = 0;
   mission.started = false; mission._started = false; mission.beatIndex = 0; mission.flags.clear();
+  hostileWaveSpawned = false;
   if (document.pointerLockElement) document.exitPointerLock();
   mainMenu.update({ continueEnabled: false });
   mainMenu.show();
@@ -216,7 +217,10 @@ const mainMenu = new MainMenu({
     gameStarted = true;
     hud.show(); tacRadar.show();
     canvas.requestPointerLock();
-    if (!mission.started) mission.start();
+    if (!mission.started) {
+      mission.start();
+      world.spawnTaskForce(playerShip.group.position);
+    }
   },
   onContinue: () => {
     mainMenu.hide();
@@ -346,6 +350,7 @@ window.addEventListener('resize', () => {
 let throttleCmd = 0;
 let rudderCmd = 0;
 let lastContacts = [];
+let hostileWaveSpawned = false;
 
 const clock = new THREE.Clock();
 let frameCount = 0, fpsAccum = 0;
@@ -389,6 +394,7 @@ function animate() {
     };
     world.update(dt, {
       playerPos: playerShip.group.position,
+      playerShip,
       elapsed,
       fireWeapon,
       getWaveHeight: (x, z, t) => ocean.getHeightAt(x, z, t),
@@ -399,8 +405,8 @@ function animate() {
     const wp = mission.currentWaypoint;
     if (wp && playerShip.group.position.distanceTo(wp) < 500) mission.flag('nearWaypoint0');
     const spawnReq = mission.consumeSpawnRequest();
-    if (spawnReq) world.spawnWave(spawnReq, wp || playerShip.group.position);
-    if (world.entities.length && world.hostiles.length === 0) {
+    if (spawnReq) { world.spawnWave(spawnReq, wp || playerShip.group.position); hostileWaveSpawned = true; }
+    if (hostileWaveSpawned && world.hostiles.length === 0) {
       mission.flag('wave1Cleared'); mission.flag('subCleared'); mission.flag('airWaveCleared');
     }
 

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EnemyShip } from '../entities/EnemyShip.js';
 import { Submarine } from '../entities/Submarine.js';
 import { Aircraft } from '../entities/Aircraft.js';
+import { FriendlyShip } from '../entities/FriendlyShip.js';
 
 export class WorldManager {
   constructor(scene, weapons) {
@@ -27,6 +28,18 @@ export class WorldManager {
         const p = aroundPos.clone().add(new THREE.Vector3(-1500 + i * 200, 0, -1800 - i * 150));
         this.entities.push(new Aircraft({ name: `Bandit ${i + 1}`, position: p, scene: this.scene }));
       }
+    }
+  }
+
+  /** Escorts holding station relative to the player so the ocean never feels empty. */
+  spawnTaskForce(aroundPos) {
+    const stations = [
+      { name: 'FS Sentinel (DDG)', offset: new THREE.Vector3(-420, 0, -60) },
+      { name: 'FS Vanguard (CG)', offset: new THREE.Vector3(360, 0, -180) },
+    ];
+    for (const s of stations) {
+      const worldPos = s.offset.clone().add(aroundPos);
+      this.entities.push(new FriendlyShip({ name: s.name, position: worldPos, stationOffset: s.offset, scene: this.scene }));
     }
   }
 
