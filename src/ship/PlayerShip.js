@@ -12,7 +12,7 @@ export class PlayerShip {
     this.group.name = 'PlayerShip';
     scene.add(this.group);
 
-    this.physics = new ShipPhysics({ length: 180, beam: 21, maxSpeedKn: 30, accel: 1.6, turnRate: 0.28 });
+    this.physics = new ShipPhysics({ length: 188, beam: 24, maxSpeedKn: 30, accel: 1.6, turnRate: 0.28 });
     this.mountPoints = null;
     this.usingPlaceholder = true;
 
@@ -21,7 +21,7 @@ export class PlayerShip {
   }
 
   _loadPlaceholderImmediately() {
-    const { group: shipGroup, mountPoints } = buildPlaceholderShip({ length: 180, beam: 21 });
+    const { group: shipGroup, mountPoints } = buildPlaceholderShip({ length: 188, beam: 24 });
     this.modelGroup = shipGroup;
     this.mountPoints = mountPoints;
     this.group.add(this.modelGroup);
@@ -38,6 +38,11 @@ export class PlayerShip {
           o.receiveShadow = true;
         }
       });
+
+      // The Blender export's long axis is local +X (bow), but the whole game
+      // (mount points, physics.forward, camera framing) assumes bow = +Z.
+      // Rotate -90 deg around Y so local +X (bow) lands on world +Z.
+      loaded.rotation.y = -Math.PI / 2;
 
       // swap in — keep mountPoints from placeholder unless the model defines its own
       // (named empties: Helm, WeaponsStation, GunBarrelTip, MissileTube1..N, CIWS1..N)

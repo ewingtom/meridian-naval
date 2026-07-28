@@ -70,18 +70,22 @@ export function buildPlaceholderShip({ length = 180, beam = 21 } = {}) {
   deckPlane.receiveShadow = true;
   group.add(deckPlane);
 
+  // Mount points are calibrated against the high-detail Blender export's actual
+  // geometry (bridge wings, VLS deck, gun barrel bbox — probed via raycasts/bbox
+  // queries against the loaded model), not just this placeholder's own proportions,
+  // so camera placement lines up correctly once PlayerShip swaps the real model in.
   const mountPoints = {
-    helm: new THREE.Vector3(0, deckY + 6.2, 20),
-    weaponsStation: new THREE.Vector3(3.2, deckY + 6.2, 22),
-    bridgeInteriorCenter: new THREE.Vector3(0, deckY + 5.6, 22),
-    gunBarrelTip: new THREE.Vector3(0, deckY + 2.6, 87),
+    helm: new THREE.Vector3(-6.5, 19.4, 17),        // port bridge wing
+    weaponsStation: new THREE.Vector3(8, 18.9, 17),  // starboard bridge wing
+    bridgeInteriorCenter: new THREE.Vector3(0, 19.5, 17),
+    gunBarrelTip: new THREE.Vector3(0, 13.6, 76),
     missileTubes: [
-      new THREE.Vector3(-4, deckY + 0.6, 45),
-      new THREE.Vector3(4, deckY + 0.6, 45),
-      new THREE.Vector3(-4, deckY + 0.6, 38),
-      new THREE.Vector3(4, deckY + 0.6, 38),
+      new THREE.Vector3(-3, 10.5, 37),
+      new THREE.Vector3(3, 10.5, 37),
+      new THREE.Vector3(-3, 10.5, 41),
+      new THREE.Vector3(3, 10.5, 41),
     ],
-    ciws: [new THREE.Vector3(0, deckY + 12.8, 20), new THREE.Vector3(0, deckY + 7.5, -40)],
+    ciws: [new THREE.Vector3(0, 16.6, 31.6), new THREE.Vector3(0, 12, -49.5)],
     deckY,
     length,
     beam,

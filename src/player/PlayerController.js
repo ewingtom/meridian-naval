@@ -32,7 +32,7 @@ export class PlayerController {
 
     // ship-local walk position/orientation — start on the open foredeck facing the bow.
     // Forward convention: forward = (0,0,-1).applyEuler(0,yaw,0) => yaw=PI faces +Z (bow).
-    this.localPos = new THREE.Vector3(0, 0, 55);
+    this.localPos = new THREE.Vector3(0, 0, 48);
     this.walkYaw = Math.PI;
     this.walkPitch = -0.03;
 
