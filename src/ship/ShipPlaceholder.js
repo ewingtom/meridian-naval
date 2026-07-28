@@ -75,8 +75,11 @@ export function buildPlaceholderShip({ length = 180, beam = 21 } = {}) {
   // queries against the loaded model), not just this placeholder's own proportions,
   // so camera placement lines up correctly once PlayerShip swaps the real model in.
   const mountPoints = {
-    helm: new THREE.Vector3(-6.5, 19.4, 17),        // port bridge wing
-    weaponsStation: new THREE.Vector3(8, 18.9, 17),  // starboard bridge wing
+    // bridge wing platforms are thin floor slabs (~0.7-0.8 tall) — stand ON TOP
+    // of them at eye height, not at their vertical center (which embeds the
+    // camera in the slab and every look direction hits the deck/wall).
+    helm: new THREE.Vector3(-6.5, 21.3, 17),        // port bridge wing
+    weaponsStation: new THREE.Vector3(8, 20.6, 17),  // starboard bridge wing
     bridgeInteriorCenter: new THREE.Vector3(0, 19.5, 17),
     gunBarrelTip: new THREE.Vector3(0, 13.6, 76),
     missileTubes: [

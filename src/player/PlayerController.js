@@ -94,8 +94,8 @@ export class PlayerController {
     // default view opens out over open water past the bow instead.
     const outward = Math.sign(local.x) || 1;
     const lookTarget = name === Station.HELM
-      ? new THREE.Vector3(local.x + outward * 25, local.y + 4, local.z + 22)
-      : new THREE.Vector3(local.x + outward * 20, local.y + 1, local.z + 18);
+      ? new THREE.Vector3(local.x + outward * 10, local.y - 2, local.z + 30)
+      : new THREE.Vector3(local.x + outward * 8, local.y - 4, local.z + 25);
 
     this.ship.getMountWorld(local, out.pos);
     const worldLook = this.ship.getMountWorld(lookTarget, new THREE.Vector3());
