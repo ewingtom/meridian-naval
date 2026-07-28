@@ -25,26 +25,73 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: deckY, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3, bevelSegments: 2, steps: 1 });
   hullGeo.rotateX(-Math.PI / 2);
   hullGeo.rotateY(Math.PI / 2);
-  const hull = new THREE.Mesh(hullGeo, mat('enemyHull_' + iffColor, iffColor, 0.6, 0.35));
+  // naval haze-grey hull (not a solid IFF-colour paint job — real ships aren't painted
+  // that way); IFF colour is reserved for small trim/marking accents instead.
+  const hull = new THREE.Mesh(hullGeo, mat('enemyHull', 0x6b7178, 0.6, 0.35));
   hull.castShadow = true;
   hull.receiveShadow = true;
   group.add(hull);
 
-  const superMat = mat('enemySuper_' + iffColor, 0x484c50, 0.55, 0.3);
-  const bridge = new THREE.Mesh(new THREE.BoxGeometry(8, 6, 12), superMat);
-  bridge.position.set(0, deckY + 3, 8);
+  // dark waterline boot stripe
+  const stripeGeo = new THREE.BoxGeometry(length * 0.92, 0.9, beam * 1.02);
+  const stripe = new THREE.Mesh(stripeGeo, mat('enemyStripe', 0x0c0e10, 0.6, 0.2));
+  stripe.position.set(0, 0.3, 0);
+  group.add(stripe);
+
+  const superMat = mat('enemySuper', 0x545a60, 0.5, 0.3);
+  const glassMat = mat('enemyGlass', 0x121a20, 0.2, 0.6);
+
+  // angled bridge block (tapered, not a plain box) with a dark window band
+  const bridgeShape = new THREE.Shape();
+  bridgeShape.moveTo(-4.2, 0); bridgeShape.lineTo(4.2, 0);
+  bridgeShape.lineTo(3.4, 6); bridgeShape.lineTo(-3.4, 6); bridgeShape.lineTo(-4.2, 0);
+  const bridgeGeo = new THREE.ExtrudeGeometry(bridgeShape, { depth: 11, bevelEnabled: false });
+  bridgeGeo.rotateX(-Math.PI / 2);
+  bridgeGeo.translate(0, deckY, 2.5);
+  const bridge = new THREE.Mesh(bridgeGeo, superMat);
   bridge.castShadow = true;
   group.add(bridge);
-  const mastGeo = new THREE.CylinderGeometry(0.4, 0.6, 8, 6);
+
+  const windowBand = new THREE.Mesh(new THREE.BoxGeometry(7.6, 1.1, 0.15), glassMat);
+  windowBand.position.set(0, deckY + 4.6, 8.05);
+  group.add(windowBand);
+
+  // lattice-style mast (tapering pole + yardarm) rather than a plain cylinder
+  const mastGeo = new THREE.CylinderGeometry(0.35, 0.55, 9, 6);
   const mast = new THREE.Mesh(mastGeo, superMat);
-  mast.position.set(0, deckY + 6 + 4, 8);
+  mast.position.set(0, deckY + 6 + 4.5, 4);
   mast.castShadow = true;
   group.add(mast);
+  const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 5, 5), superMat);
+  yard.rotation.z = Math.PI / 2;
+  yard.position.set(0, deckY + 6 + 7, 4);
+  group.add(yard);
+  const radome = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 6), mat('enemyRadome', 0xd8dbde, 0.4, 0.1));
+  radome.position.set(0, deckY + 6 + 9.4, 4);
+  group.add(radome);
 
   const gunBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 5, 8), mat('barrel', 0x161616, 0.4, 0.6));
   gunBarrel.rotation.x = Math.PI / 2;
   gunBarrel.position.set(0, deckY + 1.5, 42);
   group.add(gunBarrel);
+  const gunHouse = new THREE.Mesh(new THREE.ConeGeometry(2.2, 2.4, 5), superMat);
+  gunHouse.rotation.x = Math.PI / 2;
+  gunHouse.position.set(0, deckY + 1.3, 38.5);
+  group.add(gunHouse);
+
+  // simple deck-edge railings (thin boxes along both sides)
+  const railMat = mat('enemyRail', 0x2a2e32, 0.6, 0.4);
+  for (const side of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.55, 0.6, 0.08), railMat);
+    rail.position.set(-6, deckY + 0.9, side * beam * 0.48);
+    group.add(rail);
+  }
+
+  // small IFF/faction marking accent on the hull side (this is where iffColor shows up)
+  const marking = new THREE.Mesh(new THREE.PlaneGeometry(4, 2), mat('enemyMark_' + iffColor, iffColor, 0.6, 0.1));
+  marking.position.set(30, deckY - 1.5, beam * 0.501);
+  marking.rotation.y = Math.PI / 2;
+  group.add(marking);
 
   return { group, length, beam, deckY };
 }
