@@ -1,0 +1,109 @@
+import { Vector3, Color } from 'three';
+
+/**
+ * Hand-authored procedural sky: gradient (horizon -> zenith), sun disc + corona + halo,
+ * and a soft animated cumulus cloud layer via fbm noise. Chosen over a raw physical
+ * (Preetham) model because that model's calibration desaturates badly under normal
+ * exposure (see git history / comments in sky.js) — an authored gradient is what
+ * real AAA game skies use anyway, since it gives direct, reliable art control.
+ */
+export const SkyShader = {
+  uniforms: {
+    uSunDirection: { value: new Vector3(0, 0.5, -1) },
+    uZenithColor: { value: new Color(0x1c4d86) },
+    uHorizonColor: { value: new Color(0xaecbdd) },
+    uSunColor: { value: new Color(0xfff2d6) },
+    uCloudCoverage: { value: 0.28 },
+    uCloudiness: { value: 0.88 },
+    uCloudColorLit: { value: new Color(0xffffff) },
+    uCloudColorShadow: { value: new Color(0x415164) },
+    uTime: { value: 0 },
+  },
+  vertexShader: /* glsl */`
+    varying vec3 vWorldPosition;
+    void main() {
+      vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+      vWorldPosition = worldPosition.xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+      gl_Position.z = gl_Position.w;
+    }
+  `,
+  fragmentShader: /* glsl */`
+    varying vec3 vWorldPosition;
+    uniform vec3 uSunDirection;
+    uniform vec3 uZenithColor;
+    uniform vec3 uHorizonColor;
+    uniform vec3 uSunColor;
+    uniform float uCloudCoverage;
+    uniform float uCloudiness;
+    uniform vec3 uCloudColorLit;
+    uniform vec3 uCloudColorShadow;
+    uniform float uTime;
+
+    float hash(vec2 p) {
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 45.32);
+      return fract(p.x * p.y);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+    }
+    float fbm(vec2 p) {
+      float v = 0.0, amp = 0.52;
+      for (int i = 0; i < 6; i++) { v += amp * noise(p); p *= 2.08; amp *= 0.5; }
+      return v;
+    }
+
+    void main() {
+      vec3 dir = normalize(vWorldPosition - cameraPosition);
+      float elevation = dir.y;
+
+      float skyMix = pow(clamp(elevation, 0.0, 1.0), 0.45);
+      vec3 sky = mix(uHorizonColor, uZenithColor, skyMix);
+
+      // subtle extra warmth low near the horizon
+      float lowBand = 1.0 - smoothstep(0.0, 0.22, elevation);
+      sky = mix(sky, sky + vec3(0.05, 0.02, -0.02), lowBand * 0.5);
+
+      // below-horizon (looking down toward sea from a height, sky box interior) — keep consistent with horizon color
+      if (elevation < 0.0) {
+        sky = uHorizonColor * 0.9;
+      }
+
+      // sun disc / corona / halo
+      float sunDot = dot(dir, normalize(uSunDirection));
+      float sunDisc = smoothstep(0.99930, 0.99985, sunDot);
+      float corona = pow(clamp(sunDot, 0.0, 1.0), 340.0) * 0.8;
+      float halo = pow(clamp(sunDot, 0.0, 1.0), 12.0) * 0.22;
+      vec3 sunContribution = uSunColor * (sunDisc * 8.0 + corona * 4.0 + halo);
+
+      // cloud layer — simple spherical (azimuth, elevation) sky-dome UV, robust at all angles
+      float cloudFade = smoothstep(0.0, 0.12, elevation) * (1.0 - smoothstep(0.7, 1.0, elevation));
+      float az = atan(dir.z, dir.x);
+      vec2 cuv = vec2(az * 1.6, elevation * 3.0) + vec2(uTime * 0.006, uTime * 0.0015);
+      float base = fbm(cuv);
+      float detail = fbm(cuv * 3.3 + 4.0) * 0.5;
+      float cloudN = base * 0.7 + detail * 0.3;
+      float cloud = smoothstep(uCloudCoverage, uCloudCoverage + 0.42, cloudN);
+      cloud = pow(cloud, 1.3);
+
+      vec3 horizDir = normalize(vec3(dir.x, 0.0, dir.z));
+      vec3 horizSun = normalize(vec3(uSunDirection.x, 0.0, uSunDirection.z));
+      float sunFacing = clamp(dot(horizDir, horizSun) * 0.5 + 0.5, 0.0, 1.0);
+      vec3 cloudColor = mix(uCloudColorShadow, uCloudColorLit, pow(sunFacing, 1.6));
+      cloudColor += uSunColor * corona * 0.15;
+
+      sky = mix(sky, cloudColor, cloud * cloudFade * uCloudiness);
+
+      vec3 color = sky + sunContribution * (1.0 - cloud * cloudFade * 0.85);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+};
