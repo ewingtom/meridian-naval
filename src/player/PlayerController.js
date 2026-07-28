@@ -88,9 +88,14 @@ export class PlayerController {
   _stationWorldPose(name, out = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() }) {
     const mp = this.ship.mountPoints;
     const local = name === Station.HELM ? mp.helm : mp.weaponsStation;
+    // Bridge wings sit tucked against the superstructure, so a straight-ahead
+    // look target clips into the hull/bridge wall — bias outward (away from
+    // centerline, along the wing's own side) and slightly up/forward so the
+    // default view opens out over open water past the bow instead.
+    const outward = Math.sign(local.x) || 1;
     const lookTarget = name === Station.HELM
-      ? new THREE.Vector3(local.x, local.y, local.z + 20)
-      : new THREE.Vector3(local.x, local.y - 2, local.z + 15);
+      ? new THREE.Vector3(local.x + outward * 25, local.y + 4, local.z + 22)
+      : new THREE.Vector3(local.x + outward * 20, local.y + 1, local.z + 18);
 
     this.ship.getMountWorld(local, out.pos);
     const worldLook = this.ship.getMountWorld(lookTarget, new THREE.Vector3());
