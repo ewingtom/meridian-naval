@@ -9,6 +9,7 @@ import { WeaponsSystem } from './weapons/WeaponsSystem.js';
 import { RadarSystem } from './systems/RadarSystem.js';
 import { MissionSystem } from './systems/MissionSystem.js';
 import { WorldManager } from './world/WorldManager.js';
+import { buildIsland } from './world/Island.js';
 import { AudioEngine } from './audio/AudioEngine.js';
 import { ShipHUD, TacticalRadar, MainMenu, PauseMenu, SettingsPanel, CommsLog, DamageVignette } from './ui/index.js';
 
@@ -33,6 +34,11 @@ ocean.setFogColor(fogColor);
 const playerShip = new PlayerShip(scene);
 playerShip.group.position.set(0, 0, 0);
 const playerProxy = { get position() { return playerShip.group.position; } };
+
+// Landfall island along the patrol route to VIGIL — somewhere to actually go ashore.
+const island = buildIsland({ radius: 260, peak: 58 });
+island.group.position.set(2100, 0, 3500);
+scene.add(island.group);
 
 const cameraRig = new CameraRig(camera);
 cameraRig.setImmediate(new THREE.Vector3(0, 20, 30), new THREE.Quaternion());
@@ -337,7 +343,7 @@ function fireSelectedWeapon() {
 // ============================ RESIZE / DEBUG ============================
 window.GAME = {
   pipeline, sky, ocean, camera, scene, renderer, THREE, playerShip, cameraRig, playerController,
-  weapons, radar, world, mission, audio, hud, tacRadar, mainMenu, pauseMenu, settings, commsLog, damageVignette,
+  weapons, radar, world, mission, audio, hud, tacRadar, mainMenu, pauseMenu, settings, commsLog, damageVignette, island,
 };
 
 window.addEventListener('resize', () => {
@@ -386,6 +392,11 @@ function animate() {
 
   sky.update(camera, elapsed);
   ocean.update(dt, elapsed, camera);
+
+  // lighthouse beacon pulse
+  const beaconPulse = 1.6 + Math.max(0, Math.sin(elapsed * 0.9)) * 2.2;
+  island.lamp.material.emissiveIntensity = beaconPulse;
+  island.beaconLight.intensity = beaconPulse * 3.2;
 
   if (active) {
     radar.update(dt);
