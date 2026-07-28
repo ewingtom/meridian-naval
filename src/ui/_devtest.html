@@ -1,0 +1,32 @@
+<!doctype html>
+<!--
+  Throwaway visual test harness for src/ui components. NOT referenced from
+  the real index.html and not part of the production build — safe to run
+  directly during dev (`npm run dev`, then open /src/ui/_devtest.html).
+  Delete freely; nothing else depends on this file.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>UI Devtest</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <style>
+    body { background: #04080a; }
+    #devtest-controls {
+      position: fixed; top: 8px; right: 8px;
+      z-index: 999; display: flex; flex-direction: column; gap: 4px; width: 190px;
+      max-height: 96vh; overflow-y: auto;
+      pointer-events: auto;
+    }
+    #devtest-controls button {
+      font: 10px monospace; background: rgba(0,0,0,0.7); color: #4de8ff; border: 1px solid #4de8ff;
+      padding: 4px 6px; cursor: pointer; text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui-root"></div>
+  <div id="devtest-controls"></div>
+  <script type="module" src="./_devtest.js"></script>
+</body>
+</html>

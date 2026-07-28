@@ -1,0 +1,57 @@
+/* radar/radar.css — tactical sweep radar panel */
+
+.tac-radar {
+  position: absolute;
+  right: 18px;
+  top: 18px;
+  width: calc(var(--radar-size, 260px) + 24px);
+  padding: 10px 12px 12px;
+  pointer-events: auto;
+  opacity: 1;
+  transition: opacity 0.4s var(--ease-hud), transform 0.4s var(--ease-hud);
+}
+.tac-radar.tac-radar-hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+/* See styles.css `#ui-root * { pointer-events: auto }` for why !important is needed
+   to actually stop a hidden radar panel from intercepting clicks. */
+.tac-radar.tac-radar-hidden,
+.tac-radar.tac-radar-hidden * {
+  pointer-events: none !important;
+}
+
+.tac-radar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.tac-radar-mode {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--c-cyan);
+  cursor: pointer;
+  padding: 2px 6px;
+  border: 1px solid var(--c-border);
+  user-select: none;
+  transition: background 0.2s;
+}
+.tac-radar-mode:hover {
+  background: var(--c-cyan-soft);
+}
+
+.tac-radar-canvas {
+  display: block;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, rgba(10, 30, 36, 0.9) 0%, rgba(4, 12, 15, 0.95) 100%);
+  box-shadow: inset 0 0 22px rgba(0,0,0,0.6), 0 0 14px rgba(77,232,255,0.08);
+  cursor: crosshair;
+}
+
+.tac-radar-range {
+  text-align: center;
+  margin-top: 6px;
+}

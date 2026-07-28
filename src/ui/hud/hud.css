@@ -1,0 +1,355 @@
+/* hud/hud.css — in-world piloting HUD */
+
+.ship-hud {
+  position: absolute;
+  inset: 0;
+  font-family: var(--font-mono);
+  color: var(--c-text);
+  opacity: 1;
+  transition: opacity 0.4s var(--ease-hud);
+}
+.ship-hud.shud-hidden {
+  opacity: 0;
+}
+/* ShipHUD is a fully passive readout (no clickable controls). styles.css sets
+   `#ui-root * { pointer-events: auto }` for interactive panels elsewhere, so we
+   must win that specificity fight here to stay click-through to the 3D canvas. */
+.ship-hud,
+.ship-hud * {
+  pointer-events: none !important;
+}
+
+/* ---------------- compass ribbon ---------------- */
+.shud-compass {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(46vw, 560px);
+  height: 44px;
+  overflow: hidden;
+  padding: 0 8px;
+}
+.shud-compass-tape {
+  position: absolute;
+  inset: 0;
+  top: 6px;
+}
+.shud-tick {
+  position: absolute;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translateX(-50%);
+  transition: left 0.05s linear;
+}
+.shud-tick-line {
+  width: 1px;
+  height: 8px;
+  background: var(--c-text-faint);
+}
+.shud-tick.major .shud-tick-line {
+  height: 12px;
+  width: 2px;
+  background: var(--c-cyan);
+}
+.shud-tick-label {
+  margin-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--c-text-dim);
+}
+.shud-tick.major .shud-tick-label {
+  color: var(--c-cyan);
+}
+.shud-compass-center-marker {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--c-amber);
+  filter: drop-shadow(0 0 4px var(--c-amber));
+}
+.shud-compass-readout {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-weight: 600;
+}
+.shud-heading-num {
+  font-size: 15px;
+  color: var(--c-cyan);
+  text-shadow: 0 0 8px rgba(77, 232, 255, 0.7);
+}
+.shud-heading-deg { color: var(--c-cyan); font-size: 11px; }
+.shud-heading-label {
+  font-size: 11px;
+  color: var(--c-text-dim);
+  margin-left: 4px;
+  letter-spacing: 0.1em;
+}
+
+/* ---------------- objective ticker ---------------- */
+.shud-objective {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 18px 7px 12px;
+  min-width: 280px;
+  max-width: 46vw;
+}
+.shud-obj-icon {
+  color: var(--c-amber);
+  font-size: 12px;
+  text-shadow: 0 0 6px var(--c-amber);
+  flex-shrink: 0;
+}
+.shud-obj-body { flex: 1; min-width: 0; }
+.shud-obj-text {
+  font-size: 12.5px;
+  color: var(--c-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shud-obj-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  border-left: 1px solid var(--c-border);
+  padding-left: 10px;
+}
+.shud-obj-arrow {
+  color: var(--c-amber);
+  font-size: 12px;
+  transition: transform 0.3s var(--ease-hud);
+  text-shadow: 0 0 6px var(--c-amber);
+}
+.shud-obj-dist {
+  font-size: 10px;
+  color: var(--c-text-dim);
+  margin-top: 1px;
+}
+
+/* ---------------- bottom-left cluster (hull + speed) ---------------- */
+.shud-bottom-left {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 240px;
+}
+
+.shud-hull-block, .shud-speed-block, .shud-weapon-block {
+  padding: 10px 16px 12px;
+}
+
+.shud-hull-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.shud-hull-bar {
+  flex: 1;
+  height: 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--c-border);
+  position: relative;
+  overflow: hidden;
+}
+.shud-hull-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, var(--c-green-dim), var(--c-green));
+  box-shadow: 0 0 8px var(--c-green);
+  transition: width 0.4s var(--ease-hud), background 0.4s;
+}
+.shud-hull-block.warning .shud-hull-fill {
+  background: linear-gradient(90deg, var(--c-amber-dim), var(--c-amber));
+  box-shadow: 0 0 8px var(--c-amber);
+}
+.shud-hull-block.critical .shud-hull-fill {
+  background: linear-gradient(90deg, var(--c-red-dim), var(--c-red));
+  box-shadow: 0 0 8px var(--c-red);
+  animation: hud-pulse 1.1s ease-in-out infinite;
+}
+.shud-hull-pct {
+  font-size: 12px;
+  font-weight: 600;
+  width: 38px;
+  text-align: right;
+}
+
+.shud-subsystems {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+}
+.shud-sys {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--c-text-faint);
+}
+.shud-sys svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.shud-sys.nominal { color: var(--c-green); }
+.shud-sys.damaged { color: var(--c-amber); animation: hud-pulse 1.4s ease-in-out infinite; }
+.shud-sys.destroyed { color: var(--c-red); opacity: 0.55; }
+.shud-sys.destroyed svg { stroke-dasharray: 2 3; }
+
+.shud-speed-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+}
+.shud-speed-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--c-cyan);
+  text-shadow: 0 0 8px rgba(77,232,255,0.6);
+}
+.shud-speed-unit {
+  font-size: 10px;
+  color: var(--c-text-dim);
+  letter-spacing: 0.1em;
+}
+.shud-throttle-bar {
+  position: relative;
+  height: 6px;
+  margin-top: 8px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--c-border);
+}
+.shud-throttle-zero {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--c-text-faint);
+}
+.shud-throttle-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: var(--c-cyan);
+  box-shadow: 0 0 6px var(--c-cyan);
+  transition: width 0.25s var(--ease-hud), left 0.25s var(--ease-hud);
+}
+.shud-throttle-fill.reverse { background: var(--c-amber); box-shadow: 0 0 6px var(--c-amber); }
+
+/* ---------------- bottom-right cluster (weapon) ---------------- */
+.shud-bottom-right {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 220px;
+}
+.shud-weapon-name {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--c-text);
+}
+.shud-weapon-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  gap: 8px;
+}
+.shud-ammo-pips {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.shud-pip {
+  width: 6px;
+  height: 12px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid var(--c-border);
+}
+.shud-pip.filled {
+  background: var(--c-cyan);
+  box-shadow: 0 0 5px var(--c-cyan);
+}
+.shud-ammo-count {
+  font-size: 12px;
+  color: var(--c-text-dim);
+  flex-shrink: 0;
+}
+.shud-weapon-status {
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--c-green);
+}
+.shud-weapon-block.not-ready .shud-weapon-status {
+  color: var(--c-amber);
+  animation: hud-pulse 1s ease-in-out infinite;
+}
+
+/* ---------------- reticle ---------------- */
+.shud-reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 90px;
+  height: 90px;
+  transform: translate(-50%, -50%);
+  animation: hud-fade-in 0.2s var(--ease-hud);
+}
+.shud-reticle svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.ret-ring {
+  fill: none;
+  stroke: var(--c-cyan);
+  stroke-width: 1.4;
+  opacity: 0.85;
+}
+.ret-tick {
+  stroke: var(--c-cyan);
+  stroke-width: 2;
+}
+.ret-dot {
+  fill: var(--c-cyan);
+  filter: drop-shadow(0 0 3px var(--c-cyan));
+}
+
+@media (max-width: 720px) {
+  .shud-bottom-left, .shud-bottom-right { width: 180px; }
+  .shud-compass { width: 80vw; }
+}

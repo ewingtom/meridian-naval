@@ -1,0 +1,175 @@
+/* notifications/comms.css — CommsLog radio chatter + DamageVignette overlay */
+
+/* ---------------- CommsLog ---------------- */
+.comms-log {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  width: min(420px, 34vw);
+  min-width: 280px;
+  z-index: 20;
+  opacity: 1;
+  transition: opacity 0.3s;
+}
+.comms-log.comms-hidden { opacity: 0; }
+
+/* The log's own padding/gaps must stay click-through to the game below;
+   only the cards themselves (and their dismiss buttons) should be clickable.
+   See styles.css `#ui-root * { pointer-events: auto }` for why !important is needed. */
+.comms-log {
+  pointer-events: none !important;
+}
+.comms-card,
+.comms-card * {
+  pointer-events: auto !important;
+}
+.comms-log.comms-hidden,
+.comms-log.comms-hidden * {
+  pointer-events: none !important;
+}
+
+.comms-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+}
+
+.comms-card {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--c-bg-panel);
+  border: 1px solid var(--c-border);
+  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateX(-24px);
+  font-family: var(--font-mono);
+}
+.comms-card.comms-in {
+  animation: comms-slide-in 0.35s var(--ease-hud) forwards;
+}
+.comms-card.comms-out {
+  animation: comms-slide-out 0.4s var(--ease-hud-in) forwards;
+}
+@keyframes comms-slide-in {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes comms-slide-out {
+  from { opacity: 1; transform: translateX(0); max-height: 120px; }
+  to   { opacity: 0; transform: translateX(-16px); max-height: 0; }
+}
+
+.comms-card-accent {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--c-cyan);
+  box-shadow: 0 0 8px var(--c-cyan);
+}
+.comms-card.urgency-warning .comms-card-accent { background: var(--c-amber); box-shadow: 0 0 8px var(--c-amber); }
+.comms-card.urgency-critical .comms-card-accent { background: var(--c-red); box-shadow: 0 0 8px var(--c-red); }
+.comms-card.urgency-critical { animation: hud-pulse 1.6s ease-in-out infinite; }
+.comms-card.urgency-critical.comms-in { animation: comms-slide-in 0.35s var(--ease-hud) forwards, hud-pulse 1.6s ease-in-out 0.4s infinite; }
+
+.comms-card-body {
+  flex: 1;
+  padding: 8px 12px;
+  min-width: 0;
+}
+.comms-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.comms-speaker {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--c-cyan);
+  font-weight: 700;
+}
+.comms-urgency-tag {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-amber);
+  border: 1px solid currentColor;
+  padding: 0 4px;
+}
+.comms-card.urgency-critical .comms-urgency-tag { color: var(--c-red); }
+
+.comms-text {
+  font-size: 12.5px;
+  color: var(--c-text);
+  line-height: 1.35;
+}
+
+.comms-dismiss {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--c-border);
+  color: var(--c-text-faint);
+  width: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-size: 14px;
+  transition: color 0.2s, background 0.2s;
+}
+.comms-dismiss:hover { color: var(--c-red); background: var(--c-red-soft); }
+
+/* ---------------- DamageVignette ---------------- */
+.damage-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  opacity: 1;
+  transition: opacity 0.3s;
+}
+.damage-vignette.dv-hidden { opacity: 0; }
+
+/* Purely decorative full-screen overlay — must never intercept input.
+   See styles.css `#ui-root * { pointer-events: auto }` for why !important is needed. */
+.damage-vignette,
+.damage-vignette * {
+  pointer-events: none !important;
+}
+
+.dv-base {
+  --dv-base-alpha: 0;
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    transparent 45%,
+    rgba(180, 10, 10, var(--dv-base-alpha)) 100%
+  );
+  transition: background 0.4s var(--ease-hud);
+}
+.damage-vignette.dv-critical .dv-base {
+  animation: dv-critical-pulse 1.3s ease-in-out infinite;
+}
+@keyframes dv-critical-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.35); }
+}
+
+.dv-flash {
+  --dv-flash-alpha: 0;
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    rgba(255, 40, 40, calc(var(--dv-flash-alpha) * 0.4)) 0%,
+    rgba(180, 0, 0, var(--dv-flash-alpha)) 100%
+  );
+  opacity: 0;
+}
+.dv-flash.dv-flash-play {
+  animation: dv-flash-pulse 0.55s ease-out forwards;
+}
+@keyframes dv-flash-pulse {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
