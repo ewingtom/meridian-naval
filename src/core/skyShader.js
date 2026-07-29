@@ -57,7 +57,7 @@ export const SkyShader = {
     }
     float fbm(vec2 p) {
       float v = 0.0, amp = 0.52;
-      for (int i = 0; i < 6; i++) { v += amp * noise(p); p *= 2.08; amp *= 0.5; }
+      for (int i = 0; i < 4; i++) { v += amp * noise(p); p *= 2.08; amp *= 0.5; }
       return v;
     }
 

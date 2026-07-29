@@ -5,9 +5,19 @@ import { buildPlaceholderShip } from './ShipPlaceholder.js';
 import { getSharedMicroDetailMaps } from '../utils/ProceduralTextures.js';
 import { buildBridgeInterior } from './BridgeInterior.js';
 import { buildEnemyShipMesh } from '../entities/geometryKits.js';
+import { ShipWake } from './ShipWake.js';
 import { allocEntityId, Domain, IFF } from '../entities/Entity.js';
 
 const MODEL_URL = '/assets/models/player_ship.glb';
+const ESCORT_MODEL_URL = '/assets/models/escort_hull.glb';
+
+let sharedEscortScenePromise = null;
+function loadEscortHullScene() {
+  if (!sharedEscortScenePromise) {
+    sharedEscortScenePromise = new GLTFLoader().loadAsync(ESCORT_MODEL_URL).then((gltf) => gltf.scene);
+  }
+  return sharedEscortScenePromise;
+}
 
 /**
  * Any ship a human (or AI) can walk around, sit at a station in, and pilot — the
@@ -15,10 +25,11 @@ const MODEL_URL = '/assets/models/player_ship.glb';
  * assign any player to any of them. `hullKind` picks the exterior:
  *   'hero'   — the real Blender player_ship.glb (async, placeholder-first), used only
  *              for the Meridian, exactly as PlayerShip.js used to build it standalone.
- *   'escort' — the procedural buildEnemyShipMesh hull (already built, no placeholder
- *              swap needed), painted with `iffColor`, used for task-force escorts.
+ *   'escort' — the real Blender escort_hull.glb (async, procedural buildEnemyShipMesh
+ *              stand-in shown first so the ship isn't invisible for a frame), painted
+ *              with `iffColor` via its IFF-trim material, used for task-force escorts.
  * Every instance gets its own walk-in BridgeInterior — scaled down for escorts, since
- * their procedural hull's bridge block is much smaller than the Meridian's.
+ * their hull's bridge block is much smaller than the Meridian's.
  */
 export class CrewedShip {
   constructor(scene, { hullKind = 'hero', iffColor = 0x2f6a8a, name = 'Ship', shipId } = {}) {
@@ -31,7 +42,9 @@ export class CrewedShip {
     scene.add(this.group);
 
     this.mountPoints = null;
-    this.usingPlaceholder = hullKind === 'hero';
+    // Both hullKinds now show an instant procedural stand-in and swap to a real
+    // Blender model once it loads asynchronously (see _tryLoadRealModel / _tryLoadEscortModel).
+    this.usingPlaceholder = true;
 
     // Entity-shaped so the existing radar/targeting/weapons-collision code (which all
     // expects a flat list of { id, position, domain, iff, name, health, maxHealth,
@@ -60,10 +73,80 @@ export class CrewedShip {
       const { group: hullGroup, length, beam, deckY } = buildEnemyShipMesh(iffColor);
       this.modelGroup = hullGroup;
       this.deckY = deckY;
+      this.length = length;
       this.group.add(this.modelGroup);
       this.physics = new ShipPhysics({ length, beam, maxSpeedKn: 28, accel: 1.3, turnRate: 0.24 });
       this.mountPoints = this._proceduralExteriorMounts(length, beam, deckY);
-      this._addBridgeInterior({ scale: 0.5, center: new THREE.Vector3(0, deckY + 5.5, 8) });
+      this._addBridgeInterior({ scale: 0.5, center: new THREE.Vector3(0, deckY + 5.5, 8), lite: true });
+      this._tryLoadEscortModel(iffColor);
+    }
+
+    // Stern foam wake + bow spray (see ShipWake.js). Needs this.physics (just set above)
+    // for hull length/beam and this.group (added to scene at the top of the constructor)
+    // for world-space mount-point queries, so it's constructed last.
+    this.wake = new ShipWake(scene, this);
+  }
+
+  /** Swap the procedural stand-in hull for the real Blender escort_hull.glb once it's
+   * loaded, mirroring the hero's placeholder-then-swap pattern in _tryLoadRealModel.
+   * escort_hull.glb is authored bow=+Z/up=+Y/beam=X and already centered on X=0 and
+   * (very nearly) Z=0 with Y=0 at the waterline, so unlike the hostile enemy_destroyer.glb
+   * fixup in EnemyShip.js this does NOT need any axis-reconciling rotation or box-based
+   * re-centering — that box-shift approach would also silently break the named mount-point
+   * empties below, since it repositions the instance root *after* their local positions
+   * were authored relative to it. Only a small safety scale (in case the source model's
+   * authored length ever drifts from the ShipPhysics length) is applied, about the
+   * instance's own origin, which preserves that centering. */
+  async _tryLoadEscortModel(iffColor) {
+    try {
+      const src = await loadEscortHullScene();
+      const inst = src.clone(true);
+
+      const box = new THREE.Box3().setFromObject(inst);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const targetLen = this.length || 110;
+      if (size.z > 1) inst.scale.setScalar(targetLen / size.z);
+
+      // Clone per-instance before tinting: escort1/escort2 share the cached glTF scene
+      // (and its two IFF-trim meshes share one source material), so mutating a material
+      // in place would tint both ships — and both trim strips on one ship — the same
+      // color no matter which iffColor was requested. Map from the shared *original*
+      // material's uuid to its one tinted clone so every mesh referencing that original
+      // gets reassigned to the same clone, instead of only the first one encountered.
+      const tintedByOrigUuid = new Map();
+      inst.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = true;
+        o.receiveShadow = true;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (let i = 0; i < mats.length; i++) {
+          const mat = mats[i];
+          if (!mat || !/IFF/i.test(mat.name || '')) continue;
+          let cloned = tintedByOrigUuid.get(mat.uuid);
+          if (!cloned) {
+            cloned = mat.clone();
+            cloned.color.setHex(iffColor);
+            tintedByOrigUuid.set(mat.uuid, cloned);
+          }
+          if (Array.isArray(o.material)) o.material[i] = cloned;
+          else o.material = cloned;
+        }
+      });
+      this._addMicroDetailMaps(inst);
+
+      const found = this._extractMountPoints(inst);
+
+      this.group.remove(this.modelGroup);
+      this.modelGroup = inst;
+      this.group.add(this.modelGroup);
+      if (found) this.mountPoints = { ...this.mountPoints, ...found };
+      this.usingPlaceholder = false;
+      // eslint-disable-next-line no-console
+      console.log('[CrewedShip] Loaded high-detail escort model from', ESCORT_MODEL_URL);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log('[CrewedShip] High-detail escort model not available yet, using placeholder.', err?.message || err);
     }
   }
 
@@ -87,9 +170,9 @@ export class CrewedShip {
    * escort) get a proportionally smaller room positioned inside its own bridge block
    * instead of the Meridian-sized default. Mount points get the same transform applied
    * so PlayerController's ship-local math keeps working unmodified. */
-  _addBridgeInterior({ scale = 1, center = null } = {}) {
+  _addBridgeInterior({ scale = 1, center = null, lite = false } = {}) {
     if (this.bridgeInterior) return;
-    const { group: interiorGroup, mountPoints: interiorPts } = buildBridgeInterior();
+    const { group: interiorGroup, mountPoints: interiorPts } = buildBridgeInterior({ lite });
 
     let offset = new THREE.Vector3(0, 0, 0);
     if (scale !== 1 || center) {
@@ -236,10 +319,14 @@ export class CrewedShip {
       this.physics.roll = THREE.MathUtils.lerp(this.physics.roll || 0, this._netTarget.roll || 0, t);
       this.physics.pitch = THREE.MathUtils.lerp(this.physics.pitch || 0, this._netTarget.pitch || 0, t);
       this.physics.applyToObject3D(this.group);
+      this.group.updateMatrixWorld();
+      this.wake?.update(dt, elapsed, getWaveHeight);
       return;
     }
     this.physics.update(dt, getWaveHeight, elapsed);
     this.physics.applyToObject3D(this.group);
+    this.group.updateMatrixWorld();
+    this.wake?.update(dt, elapsed, getWaveHeight);
   }
 
   applyNetworkState({ pos, heading, speed, roll, pitch }) {
@@ -273,6 +360,7 @@ export class CrewedShip {
   }
 
   dispose(scene) {
+    this.wake?.dispose();
     scene.remove(this.group);
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();

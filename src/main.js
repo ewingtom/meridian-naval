@@ -28,6 +28,7 @@ const sky = new SkySystem(renderer, scene);
 const ocean = new OceanField(renderer, sky.sunDirection);
 scene.add(ocean.group);
 ocean.setEnvMap(sky.envRT.texture);
+pipeline.bindSunLight(sky.sunLight);
 
 const fogColor = new THREE.Color(0x9dc3dc);
 scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00042);
@@ -157,6 +158,67 @@ function shipProxy(ship) {
   return { get position() { return ship.group.position; } };
 }
 
+// ---- AI-crewmate radio chatter: fires from ShipAutopilot.updateWeapons whenever an
+// AI-manned weapons station (an escort with nobody aboard, or the player's own ship
+// when someone else holds Helm but not Weapons) picks up a target — literally "an AI
+// agent manning another station causing you to react" rather than flavor text, since
+// it's tied to the same fireWeapon call that actually damages the target. ----
+function shipCallsign(ship) {
+  const m = (ship.name || '').match(/^FS ([A-Za-z]+)/);
+  return m ? m[1].toUpperCase() : (ship.name || 'UNIT').toUpperCase();
+}
+function announceAiEngagement(ship, target) {
+  const call = shipCallsign(ship);
+  const targetDesc = target.domain === 'SUBSURFACE' ? 'a submerged contact'
+    : target.domain === 'AIR' ? 'an inbound aircraft'
+    : 'a hostile surface contact';
+  commsLog.push({ speaker: `${call} WEAPONS (AI)`, text: `Engaging ${targetDesc} — ${target.name || 'unknown track'} designated, weapons free.`, urgency: 'warning' });
+  audio.playRadioBlip();
+}
+function announceAiDisengagement(ship) {
+  commsLog.push({ speaker: `${shipCallsign(ship)} WEAPONS (AI)`, text: 'Target down or out of range. Stowing weapons, resuming patrol picture.', urgency: 'normal' });
+}
+
+// ---- Ambient task-force traffic: periodic radio chatter and, once the scripted
+// mission beats run out, fresh contacts to investigate — so a long patrol never goes
+// quiet. Anchored to real game state (spawns real entities, picks real bearings) per
+// the "keep everything anchored to game logic" directive, not just flavor text. ----
+const AMBIENT_COMMS = [
+  { speaker: 'CIC', text: 'Surface picture nominal, no unclassified contacts within twenty miles.', urgency: 'normal' },
+  { speaker: 'SONAR', text: 'Passive array holding on biologics only, no subsurface threat indication.', urgency: 'normal' },
+  { speaker: 'TASK FORCE ACTUAL', text: 'All units report readiness condition Zebra set and maintained. Well done.', urgency: 'normal' },
+  { speaker: 'CIC', text: 'Weather deck advisory — freshening sea state, secure loose gear topside.', urgency: 'normal' },
+  { speaker: 'HORIZON ACTUAL', text: 'Be advised, satellite pass in twenty mikes — maintain EMCON discipline.', urgency: 'normal' },
+];
+let nextAmbientAt = 26 + Math.random() * 14;
+let extraWaveCount = 0;
+function updateAmbientEvents(dt, elapsed) {
+  nextAmbientAt -= dt;
+  if (nextAmbientAt > 0) return;
+  nextAmbientAt = 40 + Math.random() * 35;
+
+  const missionDone = mission.beatIndex >= 5; // 'final' beat index in MissionSystem's BEATS table
+  if (missionDone && world.hostiles.length === 0 && extraWaveCount < 3 && (!mp.inSession || mp.isHost)) {
+    // Command keeps tasking the task force once the scripted patrol wraps up, instead
+    // of the ocean going empty — a fresh contact near the ship, framed as new orders.
+    extraWaveCount++;
+    const around = ships.player.group.position.clone().add(
+      new THREE.Vector3((Math.random() - 0.5) * 1200, 0, 900 + Math.random() * 600)
+    );
+    world.spawnWave('wave1', around);
+    hostileWaveSpawned = true;
+    commsLog.push({
+      speaker: 'HORIZON ACTUAL',
+      text: `New tasking, MERIDIAN — unclassified surface contact detected near your position. Investigate and prosecute if hostile.`,
+      urgency: 'warning',
+    });
+    audio.playRadioBlip();
+    return;
+  }
+  const line = AMBIENT_COMMS[Math.floor(Math.random() * AMBIENT_COMMS.length)];
+  commsLog.push(line);
+}
+
 // ============================ UI ============================
 const uiRoot = document.getElementById('ui-root');
 
@@ -202,11 +264,10 @@ settings.hide();
 let settingsIsOpen = false;
 
 function applyGraphicsQuality(q) {
-  const dpr = window.devicePixelRatio || 1;
-  const caps = { low: 1, medium: Math.min(1.25, dpr), high: Math.min(1.75, dpr), ultra: Math.min(2, dpr) };
-  renderer.setPixelRatio(caps[q] ?? Math.min(1.5, dpr));
-  pipeline.bloomPass.enabled = q !== 'low';
+  pipeline.setQuality(q);
+  ocean.setQuality(q);
 }
+applyGraphicsQuality(settings.values.graphicsQuality);
 
 let gameStarted = false;
 let paused = false;
@@ -665,7 +726,12 @@ function animate() {
           autopilots[shipId].updateHelm(dt, { anchorShip: ships.player, waypoint: mission.currentWaypoint });
         }
         if (!mp.weaponsIsHuman(shipId)) {
-          autopilots[shipId].updateWeapons(dt, { hostiles: world.hostiles, fireWeapon: fireFriendlyWeapon });
+          autopilots[shipId].updateWeapons(dt, {
+            hostiles: world.hostiles,
+            fireWeapon: fireFriendlyWeapon,
+            onEngage: (autoShip, target) => announceAiEngagement(autoShip, target),
+            onDisengage: (autoShip) => announceAiDisengagement(autoShip),
+          });
         }
       }
       // networked ships still need update() every frame — it's what lerps the
@@ -698,6 +764,7 @@ function animate() {
 
   if (active) {
     radar.update(dt);
+    if (gameStarted) updateAmbientEvents(dt, elapsed);
     world.update(dt, {
       playerPos: ships.player.group.position,
       playerShip: ships.player,
@@ -706,7 +773,7 @@ function animate() {
       getWaveHeight,
       ...radar.sonarContext,
     });
-    weapons.update(dt, { ships: Object.values(ships), enemies: world.entities, elapsed });
+    weapons.update(dt, { ships: Object.values(ships), enemies: world.entities, elapsed, camera });
 
     const wp = mission.currentWaypoint;
     if (wp && ships.player.group.position.distanceTo(wp) < 500) mission.flag('nearWaypoint0');

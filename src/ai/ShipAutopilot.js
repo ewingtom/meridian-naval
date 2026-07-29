@@ -14,6 +14,9 @@ export class ShipAutopilot {
     this.helmEnabled = true;
     this.weaponsEnabled = true;
     this._fireCooldown = Math.random() * 4;
+    // Tracks whether this crew is currently "in a fight" so onEngage/onDisengage fire
+    // once per episode rather than spamming a line every 2-second gun cycle.
+    this._engaged = false;
   }
 
   updateHelm(dt, { anchorShip, waypoint }) {
@@ -60,21 +63,30 @@ export class ShipAutopilot {
 
   /** Periodically engage the nearest in-range hostile with the deck gun, mirroring the
    * player's own gun-fire path through the same generic `fireWeapon` callback the
-   * hostile AI already uses, so no separate ammo/effects system is needed. */
-  updateWeapons(dt, { hostiles, fireWeapon }) {
+   * hostile AI already uses, so no separate ammo/effects system is needed. `onEngage`/
+   * `onDisengage` fire once per fight (not once per shot) so the AI crew's radio calls
+   * — "Weapons reports a contact, engaging" — read as real reports, not spam, and give
+   * the player something concrete to react to (check the plot, help finish it off, etc).
+   */
+  updateWeapons(dt, { hostiles, fireWeapon, onEngage, onDisengage }) {
     if (!this.weaponsEnabled) return;
     this._fireCooldown -= dt;
-    if (this._fireCooldown > 0 || !hostiles?.length) return;
     const mp = this.ship.mountPoints;
-    if (!mp?.gunBarrelTip) return;
     const shipPos = this.ship.group.position;
     let nearest = null, nearestD = 3200;
-    for (const h of hostiles) {
+    for (const h of hostiles || []) {
       if (!h.alive) continue;
       const d = h.position.distanceTo(shipPos);
       if (d < nearestD) { nearestD = d; nearest = h; }
     }
-    if (!nearest) return;
+    if (nearest && !this._engaged) {
+      this._engaged = true;
+      onEngage?.(this.ship, nearest);
+    } else if (!nearest && this._engaged) {
+      this._engaged = false;
+      onDisengage?.(this.ship);
+    }
+    if (this._fireCooldown > 0 || !nearest || !mp?.gunBarrelTip) return;
     const from = this.ship.getMountWorld(mp.gunBarrelTip, new THREE.Vector3());
     fireWeapon('playerShell', from, nearest.position.clone(), this.ship, nearest);
     this._fireCooldown = 2.2 + Math.random() * 1.5;

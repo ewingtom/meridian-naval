@@ -30,7 +30,7 @@ export class SkySystem {
     // Key sun light — warm, low-ish for long dramatic shadows / glitter
     this.sunLight = new THREE.DirectionalLight(0xfff2e0, 3.2);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.set(2048, 2048);
+    this.sunLight.shadow.mapSize.set(1024, 1024);
     this.sunLight.shadow.camera.near = 10;
     this.sunLight.shadow.camera.far = 900;
     this.sunLight.shadow.camera.left = -260;

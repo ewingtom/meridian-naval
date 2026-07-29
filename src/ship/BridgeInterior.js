@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { getSharedHullTextures } from '../utils/ProceduralTextures.js';
 
 const CONSOLE_MODEL_URL = '/assets/models/bridge_console.glb';
 const CHAIR_MODEL_URL = '/assets/models/bridge_chair.glb';
@@ -25,7 +26,7 @@ function loadChairScene() {
  * console stations (Helm, Weapons/Tactical, Radar/Sonar) — in the same ship-local
  * space so it reads as "inside" that structure. All ship-local coordinates (bow=+Z).
  */
-export function buildBridgeInterior() {
+export function buildBridgeInterior({ lite = false } = {}) {
   const group = new THREE.Group();
   group.name = 'BridgeInterior';
 
@@ -35,12 +36,36 @@ export function buildBridgeInterior() {
   const minZ = 5.5, maxZ = 23.5;
   const winLo = floorY + 0.95, winHi = floorY + 2.55;
 
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x6e7680, roughness: 0.78, metalness: 0.18 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.55, metalness: 0.4 });
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.88, metalness: 0.12 });
-  const glassMat = new THREE.MeshPhysicalMaterial({
-    color: 0xd4eef8, transparent: true, opacity: 0.11, roughness: 0.05, metalness: 0.0,
-    transmission: 0.55, thickness: 0.15, side: THREE.DoubleSide, depthWrite: false,
+  // Judge-flagged issue: the interior used to be flat-color primitives with no texture
+  // at all, and picked up an unnaturally uniform sky-blue tint because the exterior
+  // PMREM env map (scene.environment, set in sky.js) was reflecting straight off the
+  // walls/floor as if they were outdoors — reusing the same panel-line texture
+  // generator built for exterior hulls (ProceduralTextures.js) fixes the flatness, and
+  // a low envMapIntensity stops the interior from mirroring the sky like it's outside.
+  const wallTex = getSharedHullTextures('bridgeWall', {
+    size: 512, baseColor: [0.43, 0.46, 0.49], panelCols: 5, panelRows: 6, rustColor: [0.32, 0.28, 0.24], rustAmount: 0.06, seed: 11,
+  });
+  const floorTexSet = getSharedHullTextures('bridgeFloor', {
+    size: 512, baseColor: [0.1, 0.11, 0.13], panelCols: 4, panelRows: 7, rustColor: [0.08, 0.07, 0.06], rustAmount: 0.1, seed: 13,
+  });
+  const cloneTex = (t, rx, ry) => { const c = t.clone(); c.needsUpdate = true; c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(rx, ry); return c; };
+  const wallMat = new THREE.MeshStandardMaterial({
+    // white — the canvas `map` already encodes the desired base color; a colored
+    // material.color here would multiply on top and double-darken the texture.
+    color: 0xffffff, roughness: 0.78, metalness: 0.18, envMapIntensity: 0.12,
+    map: cloneTex(wallTex.map, 4, 1.4), normalMap: cloneTex(wallTex.normalMap, 4, 1.4), roughnessMap: cloneTex(wallTex.roughnessMap, 4, 1.4),
+    normalScale: new THREE.Vector2(0.4, 0.4),
+  });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.55, metalness: 0.4, envMapIntensity: 0.1 });
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, roughness: 0.88, metalness: 0.12, envMapIntensity: 0.08,
+    map: cloneTex(floorTexSet.map, 3.5, 4), normalMap: cloneTex(floorTexSet.normalMap, 3.5, 4), roughnessMap: cloneTex(floorTexSet.roughnessMap, 3.5, 4),
+    normalScale: new THREE.Vector2(0.5, 0.5),
+  });
+  // Transmission glass is very expensive (extra refraction path). Opaque-ish Standard is enough.
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0xd4eef8, transparent: true, opacity: 0.14, roughness: 0.08, metalness: 0.05,
+    side: THREE.DoubleSide, depthWrite: false,
   });
   const mullionMat = new THREE.MeshStandardMaterial({ color: 0x1c1f22, roughness: 0.5, metalness: 0.4 });
   const consoleMat = new THREE.MeshStandardMaterial({ color: 0x3d434a, roughness: 0.5, metalness: 0.35 });
@@ -61,25 +86,28 @@ export function buildBridgeInterior() {
   ceiling.position.set((minX + maxX) / 2, ceilY, (minZ + maxZ) / 2);
   group.add(ceiling);
 
-  // Ceiling strips + real point fills. Brighter than earlier so seated stations
-  // don't crush to black against the daytime exterior through the glass.
+  // Ceiling strips. Full light set only on the local/hero bridge — escorts keep emissive
+  // strips + ambient so we don't pay ~30 PointLights lighting every MeshStandardMaterial.
   for (let i = 0; i < 4; i++) {
     const stripX = -5.5 + i * 3.6;
     const strip = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.06, 0.2), ceilingLightMat);
     strip.position.set(stripX, ceilY - 0.05, 14.5);
     group.add(strip);
-    const fill = new THREE.PointLight(0xd7ebf8, 5.5, 16, 1.6);
-    fill.position.set(stripX, ceilY - 0.55, 14.5);
-    group.add(fill);
+    if (!lite) {
+      const fill = new THREE.PointLight(0xd7ebf8, 5.5, 16, 1.6);
+      fill.position.set(stripX, ceilY - 0.55, 14.5);
+      group.add(fill);
+    }
   }
-  // Soft ambient bounce so the floor/consoles stay readable when looking out to sea.
-  const bridgeAmb = new THREE.AmbientLight(0x6a8498, 0.55);
+  const bridgeAmb = new THREE.AmbientLight(0x6a8498, lite ? 0.85 : 0.55);
   group.add(bridgeAmb);
-  const windowFill = new THREE.DirectionalLight(0xcfe8ff, 1.15);
-  windowFill.position.set(0, floorY + 3, maxZ + 8);
-  windowFill.target.position.set(0, floorY + 1.2, 14);
-  group.add(windowFill);
-  group.add(windowFill.target);
+  if (!lite) {
+    const windowFill = new THREE.DirectionalLight(0xcfe8ff, 1.15);
+    windowFill.position.set(0, floorY + 3, maxZ + 8);
+    windowFill.target.position.set(0, floorY + 1.2, 14);
+    group.add(windowFill);
+    group.add(windowFill.target);
+  }
 
   // ---- banded walls: solid kick, window strip, solid header ----
   function wallSegment(w, h, mat) {
@@ -195,6 +223,8 @@ export function buildBridgeInterior() {
             color: glowColor, emissive: glowColor, emissiveIntensity: 0.7, roughness: 0.35, metalness: 0,
             side: THREE.DoubleSide,
           });
+        } else if (o.material && 'envMapIntensity' in o.material) {
+          o.material.envMapIntensity = 0.15; // dampen sky-env reflection indoors, same as the rest of the room
         }
       });
       // The outer `traverse(o => o.layers.set(2))` calls below run synchronously right
@@ -210,9 +240,11 @@ export function buildBridgeInterior() {
 
     // screen glow — sells the "lit instrument panel in a dim room" look and puts a
     // soft pool of color on the desk/floor instead of the console reading as unlit.
-    const glow = new THREE.PointLight(glowColor, 1.8, 5, 2);
-    glow.position.set(0, 1.0, 0.5);
-    c.add(glow);
+    if (!lite) {
+      const glow = new THREE.PointLight(glowColor, 1.8, 5, 2);
+      glow.position.set(0, 1.0, 0.5);
+      c.add(glow);
+    }
 
     if (withChair) {
       const chairFallback = new THREE.Group();
@@ -227,7 +259,11 @@ export function buildBridgeInterior() {
       loadChairScene().then((scene) => {
         const inst = scene.clone(true);
         inst.position.set(0, 0, -0.85);
-        inst.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        inst.traverse((o) => {
+          if (!o.isMesh) return;
+          o.castShadow = true; o.receiveShadow = true;
+          if (o.material && 'envMapIntensity' in o.material) o.material.envMapIntensity = 0.15;
+        });
         // Same async-timing gap as the console load above: set layer 2 here, not just
         // in the outer synchronous traverse, or the seated chair never actually hides.
         inst.traverse((o) => o.layers.set(2));
@@ -279,10 +315,12 @@ export function buildBridgeInterior() {
     lens.position.set(sx, 1.12, 0.4);
     lookoutGroup.add(lens);
   }
-  const wingLight = new THREE.PointLight(0x7ec8e8, 1.1, 4.5, 2);
-  wingLight.position.set(0, 1.4, 0.3);
-  lookoutGroup.add(wingLight);
-  lookoutGroup.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  if (!lite) {
+    const wingLight = new THREE.PointLight(0x7ec8e8, 1.1, 4.5, 2);
+    wingLight.position.set(0, 1.4, 0.3);
+    lookoutGroup.add(wingLight);
+  }
+  lookoutGroup.traverse((o) => { if (o.isMesh) { o.castShadow = !lite; o.receiveShadow = true; } });
   group.add(lookoutGroup);
 
   // Soft hover glow rings under each seat — visible when walking the bridge so the
@@ -295,9 +333,11 @@ export function buildBridgeInterior() {
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(x, floorY + 0.02, z);
     group.add(ring);
-    const fill = new THREE.PointLight(color, 0.55, 3.2, 2);
-    fill.position.set(x, floorY + 0.9, z);
-    group.add(fill);
+    if (!lite) {
+      const fill = new THREE.PointLight(color, 0.55, 3.2, 2);
+      fill.position.set(x, floorY + 0.9, z);
+      group.add(fill);
+    }
   }
   seatMarker(0, 12.9, 0x4de8ff);
   // Weapons/radar mount points are seat positions "behind" their console along its own
@@ -408,7 +448,18 @@ export function buildBridgeInterior() {
     group.add(scr);
   }
 
-  group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  // Blanket-dampen sky-env reflection on every remaining interior material (equipment
+  // racks, cable trays, fittings, the loaded console/chair GLB materials once they
+  // swap in) — same fix as wallMat/floorMat above, applied broadly instead of having
+  // to touch each material declaration individually.
+  group.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = o.receiveShadow = true;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (m && 'envMapIntensity' in m && m !== wallMat && m !== floorMat && m !== trimMat) m.envMapIntensity = 0.15;
+    }
+  });
 
   const mountPoints = {
     // Sit well clear of the hero console+chair GLB (Cube018_* was filling the

@@ -128,11 +128,14 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   gunHouse.position.set(0, deckY + 1.3, 38.5);
   group.add(gunHouse);
 
-  // simple deck-edge railings (thin boxes along both sides)
+  // simple deck-edge railings (thin boxes along both sides) — same X/Z-swap bug class
+  // as the boot-stripe fix above: the long dimension belongs on Z (the ship's length
+  // axis), not X (beam, only ~13m wide), or the rail becomes a ~60m slab jutting
+  // sideways clean through the hull instead of hugging the deck edge.
   const railMat = mat('enemyRail', 0x2a2e32, 0.6, 0.4);
   for (const side of [-1, 1]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.55, 0.6, 0.08), railMat);
-    rail.position.set(-6, deckY + 0.9, side * beam * 0.48);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.6, length * 0.55), railMat);
+    rail.position.set(side * beam * 0.48, deckY + 0.9, -6);
     group.add(rail);
   }
 
@@ -212,11 +215,11 @@ export function buildMerchantShipMesh() {
     group.add(boom);
   }
 
-  // deck-edge railings, same convention as the combatant hull above
+  // deck-edge railings — same X/Z-swap fix as the combatant hull above
   const railMat = mat('merchantRail', 0x2a2e32, 0.6, 0.4);
   for (const side of [-1, 1]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.6, 0.6, 0.08), railMat);
-    rail.position.set(-4, deckY + 0.9, side * beam * 0.47);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.6, length * 0.6), railMat);
+    rail.position.set(side * beam * 0.47, deckY + 0.9, -4);
     group.add(rail);
   }
 

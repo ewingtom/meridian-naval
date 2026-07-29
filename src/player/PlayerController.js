@@ -21,12 +21,16 @@ export const Station = {
 const STATION_DEFS = {
   [Station.HELM]: {
     mountKey: 'helm',
-    // Seated eye is behind the desk; look slightly up through the glass band.
-    // Console/chair are moved to layer 2 while seated so they never occlude.
-    lookOffset: new THREE.Vector3(0, 1.1, 55),
-    fov: 58,
-    lookLimits: { yaw: 1.15, pitchMin: -0.28, pitchMax: 0.22 },
-    hideLayers: [2],
+    // Airborne chase view instead of a seated console shot: taking the wheel pulls
+    // the camera up and behind the ship, banking the whole hull into view as she
+    // turns — sells "piloting" as a distinct, more cinematic mode than just another
+    // window seat, and gives a much better read on heading/turn radius than a fixed
+    // bridge window ever could.
+    cameraMode: 'chase',
+    chaseOffset: new THREE.Vector3(0, 68, -150),
+    chaseLookAhead: 55,
+    fov: 62,
+    lookLimits: { yaw: Math.PI * 0.85, pitchMin: -0.55, pitchMax: 0.5 },
     promptText: 'Press E to take the Helm',
     barText: 'HELM — W/S Throttle · A/D Rudder · E to leave',
     accent: '#4de8ff',
@@ -172,6 +176,21 @@ export class PlayerController {
    * ship's present transform (not a snapshot) so it tracks movement/roll/pitch. */
   _stationWorldPose(name, out = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() }) {
     const def = STATION_DEFS[name];
+    if (def.cameraMode === 'chase') {
+      // World-space rig, not a ship-local mount point: offset up/behind the hull in
+      // the ship's OWN frame (so it swings around with her as she turns, like a
+      // camera drone slaved to the ship) and look slightly ahead of her bow rather
+      // than straight down at the deck, so forward motion actually reads as motion.
+      const shipPos = this.ship.group.position;
+      const shipQuat = this.ship.group.quaternion;
+      out.pos.copy(def.chaseOffset).applyQuaternion(shipQuat).add(shipPos);
+      const lookTarget = shipPos.clone().addScaledVector(
+        new THREE.Vector3(0, 0, 1).applyQuaternion(shipQuat), def.chaseLookAhead || 0
+      );
+      const m = new THREE.Matrix4().lookAt(out.pos, lookTarget, new THREE.Vector3(0, 1, 0));
+      out.quat.setFromRotationMatrix(m);
+      return out;
+    }
     const local = this.ship.mountPoints[def.mountKey];
     const lookTarget = local.clone().add(def.lookOffset);
 

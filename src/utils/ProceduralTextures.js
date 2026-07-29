@@ -251,3 +251,98 @@ export function getSharedMicroDetailMaps() {
   if (!_microDetail) _microDetail = buildMicroDetailMaps();
   return _microDetail;
 }
+
+/**
+ * Soft alpha "cloud/foam" blob: fbm noise thresholded against a radial falloff, white
+ * RGB with noise-driven alpha. Reused as-is for the ship-wake foam ribbon (tiled along
+ * its length) and, tinted darker/greyer via material.color, for explosion smoke puffs
+ * and projectile smoke trails — one shared canvas-generated shape covers all of them so
+ * VFX doesn't need a second downloaded/authored asset, matching this file's existing
+ * runtime-generated-texture pattern.
+ */
+export function buildFoamTexture({ size = 128, seed = 0 } = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = x / size - 0.5, ny = y / size - 0.5;
+      const r = Math.sqrt(nx * nx + ny * ny) * 2;
+      const n = fbm(x * 0.07 + seed * 13, y * 0.07 + seed * 7, 4);
+      const cell = Math.pow(THREE.MathUtils.clamp(n, 0, 1), 1.4);
+      const radial = Math.pow(Math.max(0, 1 - r), 1.5);
+      const a = THREE.MathUtils.clamp(cell * radial * 2.0, 0, 1);
+      const i = (y * size + x) * 4;
+      img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+/** Smooth radial glow dot — pure gradient, no noise. Used for ember/spark points,
+ * projectile tracer glow, and the bright hot-round billboard riding on shells. */
+export function buildSoftDotTexture({ size = 64 } = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.85)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+/** Soft expanding ring band (explosion shockwave). Radial gradient forming a feathered
+ * donut, with a touch of noise on the band edges so it doesn't read as a vector circle. */
+export function buildRingTexture({ size = 128 } = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(size, size);
+  const cx = size / 2, cy = size / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - cx) / (size / 2), dy = (y - cy) / (size / 2);
+      const r = Math.sqrt(dx * dx + dy * dy);
+      const edgeNoise = (fbm(x * 0.1, y * 0.1, 3) - 0.5) * 0.12;
+      const band = 1 - Math.abs(r - 0.72 + edgeNoise) / 0.28;
+      const a = THREE.MathUtils.clamp(band, 0, 1);
+      const i = (y * size + x) * 4;
+      img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+let _foamTex = null;
+/** Shared, lazily-built foam/smoke alpha texture (see buildFoamTexture). */
+export function getSharedFoamTexture() {
+  if (!_foamTex) _foamTex = buildFoamTexture();
+  return _foamTex;
+}
+let _dotTex = null;
+/** Shared, lazily-built soft glow-dot alpha texture (see buildSoftDotTexture). */
+export function getSharedDotTexture() {
+  if (!_dotTex) _dotTex = buildSoftDotTexture();
+  return _dotTex;
+}
+let _ringTex = null;
+/** Shared, lazily-built shockwave-ring alpha texture (see buildRingTexture). */
+export function getSharedRingTexture() {
+  if (!_ringTex) _ringTex = buildRingTexture();
+  return _ringTex;
+}

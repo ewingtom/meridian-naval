@@ -34,11 +34,11 @@ ViewportRestorePass._v2 = new THREE.Vector2();
 const VIGNETTE_GRADE_SHADER = {
   uniforms: {
     tDiffuse: { value: null },
-    uVignetteStrength: { value: 0.28 },
-    uGrainAmount: { value: 0.016 },
+    uVignetteStrength: { value: 0.22 },
+    uGrainAmount: { value: 0.0 },
     uTime: { value: 0 },
-    uContrast: { value: 1.04 },
-    uSaturation: { value: 1.08 },
+    uContrast: { value: 1.03 },
+    uSaturation: { value: 1.06 },
   },
   vertexShader: `
     varying vec2 vUv;
@@ -56,7 +56,7 @@ const VIGNETTE_GRADE_SHADER = {
     void main() {
       vec3 c = texture2D(tDiffuse, vUv).rgb;
       vec3 sCurve = c * c * (3.0 - 2.0 * c);
-      c = mix(c, sCurve, 0.15);
+      c = mix(c, sCurve, 0.12);
       c = (c - 0.5) * uContrast + 0.5;
       float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
       c = mix(vec3(luma), c, uSaturation);
@@ -65,9 +65,11 @@ const VIGNETTE_GRADE_SHADER = {
       c += vec3(-0.008, -0.003, 0.01) * shadowW + vec3(0.01, 0.004, -0.01) * highlightW;
       vec2 d = vUv - 0.5;
       c *= 1.0 - dot(d, d) * uVignetteStrength;
-      float g = (hash(vUv * vec2(1920.0, 1080.0) + uTime) - 0.5) * uGrainAmount;
-      float dither = (hash(vUv * vec2(127.1, 311.7) + uTime * 0.37) - 0.5) * (1.0 / 255.0) * 2.0;
-      c += g + dither;
+      if (uGrainAmount > 0.0001) {
+        float g = (hash(vUv * vec2(1920.0, 1080.0) + uTime) - 0.5) * uGrainAmount;
+        float dither = (hash(vUv * vec2(127.1, 311.7) + uTime * 0.37) - 0.5) * (1.0 / 255.0) * 2.0;
+        c += g + dither;
+      }
       gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
     }
   `,
@@ -75,16 +77,18 @@ const VIGNETTE_GRADE_SHADER = {
 
 export class RenderPipeline {
   constructor(canvas) {
+    // MSAA is wasted once EffectComposer is on (it resolves before post passes) and
+    // doubles fill-rate cost with FXAA. Prefer FXAA-only when post is enabled.
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: false,
       powerPreference: 'high-performance',
       stencil: false,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -93,11 +97,17 @@ export class RenderPipeline {
     this.fxaaPass = null;
     this.gradePass = null;
     this.bloomPass = null;
-    // Start on raw path — post stack has been blacking out on some WebGL configs.
-    // Enable composer only after a healthy probe frame.
+    this._quality = 'medium';
+    this._wantComposer = false;
     this._useComposer = false;
     this._composerHealthy = false;
     this._probeFrames = 0;
+    this._sunLight = null;
+  }
+
+  /** Optional DirectionalLight used for quality-driven shadow map size. */
+  bindSunLight(light) {
+    this._sunLight = light;
   }
 
   setup(scene, camera) {
@@ -109,15 +119,16 @@ export class RenderPipeline {
 
     try {
       const renderPass = new RenderPass(scene, camera);
-      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.45, 0.82);
+      // Half-res bloom: ~4× cheaper mip chain, still sells soft specular bloom.
+      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w * 0.5, h * 0.5), 0.18, 0.5, 0.85);
       this.gradePass = new ShaderPass(VIGNETTE_GRADE_SHADER);
       this.fxaaPass = new ShaderPass(FXAAShader);
       const pr = this.renderer.getPixelRatio();
       this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
       const outputPass = new OutputPass();
 
-      // Let EffectComposer allocate its own targets (more reliable than a hand-built HalfFloat RT).
       this.composer = new EffectComposer(this.renderer);
+      this.composer.setPixelRatio(pr);
       this.composer.addPass(renderPass);
       this.composer.addPass(this.bloomPass);
       this.composer.addPass(new ViewportRestorePass(this.renderer));
@@ -129,14 +140,82 @@ export class RenderPipeline {
       console.warn('[RenderPipeline] composer setup failed', err);
       this.composer = null;
     }
+
+    this.setQuality(this._quality);
+  }
+
+  /**
+   * Apply a graphics preset. medium is the smoothness default; high/ultra opt into
+   * the expensive post stack and denser shading.
+   */
+  setQuality(q) {
+    this._quality = q;
+    const dpr = window.devicePixelRatio || 1;
+    const caps = {
+      low: 1,
+      medium: Math.min(1.25, dpr),
+      high: Math.min(1.5, dpr),
+      ultra: Math.min(1.75, dpr),
+    };
+    const pr = caps[q] ?? caps.medium;
+    this.renderer.setPixelRatio(pr);
+
+    // Bloom/grade/FXAA used to be gated to High/Ultra only, which meant the DEFAULT
+    // quality tier (Medium — most players never open Settings) shipped with zero
+    // post-processing: no bloom on the sun/explosions, no color grade, no AA. Only
+    // Low (the explicit "give me raw performance" choice) skips the composer now.
+    const usePost = q !== 'low';
+    this._wantComposer = usePost && !!this.composer;
+    this._useComposer = false;
+    this._composerHealthy = false;
+    this._probeFrames = 0;
+
+    if (this.bloomPass) {
+      this.bloomPass.enabled = usePost;
+      this.bloomPass.strength = q === 'ultra' ? 0.22 : 0.16;
+    }
+    if (this.gradePass) {
+      this.gradePass.enabled = usePost;
+      this.gradePass.uniforms.uGrainAmount.value = q === 'ultra' ? 0.012 : 0.0;
+      this.gradePass.uniforms.uVignetteStrength.value = q === 'ultra' ? 0.26 : 0.18;
+    }
+    if (this.fxaaPass) this.fxaaPass.enabled = usePost;
+
+    if (q === 'low') {
+      this.renderer.shadowMap.enabled = false;
+      this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    } else if (q === 'ultra') {
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    } else {
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    }
+
+    if (this._sunLight) {
+      const map = q === 'ultra' ? 2048 : q === 'high' ? 1024 : q === 'medium' ? 1024 : 512;
+      if (this._sunLight.shadow.mapSize.x !== map) {
+        this._sunLight.shadow.mapSize.set(map, map);
+        this._sunLight.shadow.map?.dispose();
+        this._sunLight.shadow.map = null;
+      }
+      this._sunLight.castShadow = q !== 'low';
+    }
+
+    this.resize();
   }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
+    const pr = this.renderer.getPixelRatio();
     this.renderer.setSize(w, h);
-    if (this.composer) this.composer.setSize(w, h);
+    if (this.composer) {
+      this.composer.setPixelRatio(pr);
+      this.composer.setSize(w, h);
+    }
+    // Composer.setSize resets bloom to full-res; force half-res for the mip chain.
+    if (this.bloomPass) this.bloomPass.setSize(w * 0.5, h * 0.5);
     if (this.fxaaPass) {
-      const pr = this.renderer.getPixelRatio();
       this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
     }
   }
@@ -144,26 +223,25 @@ export class RenderPipeline {
   render(elapsed) {
     if (this.gradePass) this.gradePass.uniforms.uTime.value = elapsed;
 
+    if (!this._wantComposer || !this.composer) {
+      this.renderer.render(this._scene, this._camera);
+      return;
+    }
+
     // Prefer raw render until composer proves it draws a real frame (not a black blit).
-    if (!this._useComposer || !this.composer) {
+    if (!this._useComposer) {
       this.renderer.render(this._scene, this._camera);
       this._probeFrames++;
-      // After a few healthy raw frames, try enabling composer once.
-      if (this.composer && !this._composerHealthy && this._probeFrames === 8) {
+      if (!this._composerHealthy && this._probeFrames === 8) {
         this._useComposer = true;
       }
       return;
     }
 
     // WebGLRenderer resets `info.render` at the top of every internal render() call,
-    // and EffectComposer's later passes (OutputPass/gradePass/fxaaPass) each do their
-    // own full-screen-quad render() — so reading info.render.triangles right after
-    // composer.render() only ever reflects that LAST quad (~2 triangles), no matter
-    // how many triangles the real scene drew in the earlier RenderPass. That made this
-    // health check trip its "collapsed" fallback on every healthy frame too, silently
-    // and permanently disabling bloom/tonemap-grade/vignette/FXAA for the whole session.
-    // Fix: disable autoReset and accumulate across all passes in this one composer.render()
-    // call, so a real scene's triangle count actually shows up in the total.
+    // and EffectComposer's later passes each do their own full-screen-quad render() —
+    // so reading info.render.triangles right after composer.render() only ever reflects
+    // that LAST quad. Disable autoReset and accumulate across all passes in this frame.
     const info = this.renderer.info;
     const prevAutoReset = info.autoReset;
     info.autoReset = false;
@@ -171,12 +249,11 @@ export class RenderPipeline {
     try {
       this.composer.render();
       const total = info.render.triangles;
-      // A handful of fullscreen quad passes is ~8-10 triangles total; a healthy scene
-      // draw dwarfs that. If it doesn't, the composer really is collapsing.
       if (total <= 10) {
         this._composerFail = (this._composerFail || 0) + 1;
         if (this._composerFail > 3) {
           this._useComposer = false;
+          this._wantComposer = false;
           this._composerHealthy = false;
           // eslint-disable-next-line no-console
           console.warn('[RenderPipeline] composer output collapsed; using raw renderer');
@@ -187,6 +264,7 @@ export class RenderPipeline {
       }
     } catch (err) {
       this._useComposer = false;
+      this._wantComposer = false;
       this.renderer.render(this._scene, this._camera);
       // eslint-disable-next-line no-console
       console.warn('[RenderPipeline] composer threw; raw fallback', err);

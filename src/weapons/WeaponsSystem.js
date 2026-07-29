@@ -64,7 +64,7 @@ export class WeaponsSystem {
   /** `ships`: every crewed ship in play (Meridian + task-force escorts) — hostile
    * ordnance can hit any of them and each defends itself with its own CIWS mount,
    * instead of everything but one hardcoded ship being invulnerable set-dressing. */
-  update(dt, { ships, enemies, elapsed }) {
+  update(dt, { ships, enemies, elapsed, camera }) {
     for (const k in this._cooldowns) this._cooldowns[k] = Math.max(0, this._cooldowns[k] - dt);
 
     // --- CIWS auto-defense: each ship intercepts incoming ordnance aimed near it ---
@@ -89,7 +89,7 @@ export class WeaponsSystem {
     // --- update projectiles, collide vs entities / ships ---
     for (const p of this.projectiles) {
       if (p.dead) continue;
-      p.update(dt);
+      p.update(dt, camera);
 
       // CIWS rounds intercept the projectile they were fired at
       if (p.type === 'ciwsRound' && p.targetEntity && !p.targetEntity.dead) {

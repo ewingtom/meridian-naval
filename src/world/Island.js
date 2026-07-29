@@ -86,7 +86,7 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128, seed = 0,
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0.0 });
   const terrain = new THREE.Mesh(geo, mat);
   terrain.receiveShadow = true;
-  terrain.castShadow = true;
+  terrain.castShadow = false;
   group.add(terrain);
 
   // scattered rocks
@@ -121,7 +121,7 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128, seed = 0,
   const scrubGeo = new THREE.ConeGeometry(1, 2.2, 6);
   const scrubMat = new THREE.MeshStandardMaterial({ color: 0x3f6b34, roughness: 0.9, flatShading: true });
   const scrubMesh = new THREE.InstancedMesh(scrubGeo, scrubMat, scrubCount);
-  scrubMesh.castShadow = true;
+  scrubMesh.castShadow = false;
   let sPlaced = 0, sAttempts = 0;
   while (sPlaced < scrubCount && sAttempts < scrubCount * 20) {
     sAttempts++;
