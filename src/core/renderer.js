@@ -81,9 +81,9 @@ export class RenderPipeline {
     const renderPass = new RenderPass(scene, camera);
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.35, // strength
-      0.2, // radius
-      0.94  // threshold
+      0.3, // strength
+      0.15, // radius
+      0.97  // threshold
     );
 
     this.gradePass = new ShaderPass(VIGNETTE_GRADE_SHADER);

@@ -152,12 +152,17 @@ void main() {
   float depthMix = clamp(dot(N, vec3(0.0,1.0,0.0)), 0.0, 1.0);
   vec3 waterColor = mix(uDeepColor, uShallowColor, pow(depthMix, 3.0) * 0.4);
 
-  // Sun specular glitter — sharp + sparkle-modulated
+  // Sun specular glitter — sharp + sparkle-modulated. Values here feed straight into
+  // UnrealBloomPass on the raw HDR buffer (before tonemapping), so a large multiplier
+  // doesn't just look "bright" after ACES compresses it — it blooms out into one huge
+  // clipped white blob. Keep the core tight and soft-clamp the peak instead of letting
+  // it run away, so bloom sees a field of small sparkles rather than one flashbulb.
   vec3 halfDir = normalize(uSunDirection + viewDir);
-  float spec = pow(clamp(dot(N, halfDir), 0.0, 1.0), 480.0);
-  float sparkle = smoothstep(0.86, 1.0, noise(vWorldPos.xz * 3.1 + uTime * 1.7));
-  float glitter = pow(clamp(dot(N, halfDir), 0.0, 1.0), 90.0) * sparkle * 2.5;
-  vec3 sunSpec = uSunColor * (spec * 10.0 + glitter) * (0.4 + 0.6 * vFresnelBoost);
+  float specRaw = pow(clamp(dot(N, halfDir), 0.0, 1.0), 900.0);
+  float spec = min(specRaw * 0.9, 0.9);
+  float sparkle = smoothstep(0.96, 1.0, noise(vWorldPos.xz * 6.0 + uTime * 1.7));
+  float glitter = pow(clamp(dot(N, halfDir), 0.0, 1.0), 260.0) * sparkle * 0.9;
+  vec3 sunSpec = uSunColor * (spec + glitter) * (0.4 + 0.6 * vFresnelBoost);
 
   // Foam
   float foamNoise = fbm(vWorldPos.xz * 0.35 + uTime * 0.12);

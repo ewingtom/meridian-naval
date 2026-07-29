@@ -360,9 +360,14 @@ let hostileWaveSpawned = false;
 
 const clock = new THREE.Clock();
 let frameCount = 0, fpsAccum = 0;
+// Debug-only FPS readout — hidden by default (toggle with the backtick key), not a
+// permanent on-screen element in the shipping experience.
 const fpsEl = document.createElement('div');
-fpsEl.style.cssText = 'position:fixed;top:8px;left:8px;color:#7fffb0;font:12px monospace;z-index:100;background:rgba(0,0,0,0.4);padding:4px 8px;border-radius:4px;';
+fpsEl.style.cssText = 'position:fixed;top:8px;left:8px;color:#7fffb0;font:12px monospace;z-index:100;background:rgba(0,0,0,0.4);padding:4px 8px;border-radius:4px;display:none;';
 document.body.appendChild(fpsEl);
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Backquote') fpsEl.style.display = fpsEl.style.display === 'none' ? 'block' : 'none';
+});
 
 function animate() {
   requestAnimationFrame(animate);

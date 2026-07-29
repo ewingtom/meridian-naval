@@ -290,6 +290,7 @@ export class TacticalRadar {
   _drawContacts(ctx, cx, cy, R, rot) {
     const now = performance.now();
     const range = this._data.rangeM || 1;
+    const pendingLabels = [];
 
     for (const [id, s] of this._contactState.entries()) {
       const c = s.data;
@@ -353,16 +354,40 @@ export class TacticalRadar {
       ctx.restore();
 
       if (c.name) {
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = color;
-        ctx.font = '9px var(--font-mono), monospace';
-        ctx.fillText(c.name, px + 8, py - 6);
-        ctx.restore();
+        pendingLabels.push({ name: c.name, x: px + 8, y: py - 6, color, alpha });
       }
 
       this._hitTargets.push({ id, x: px, y: py, r: 10 });
     }
+
+    this._drawLabelsWithoutOverlap(ctx, pendingLabels);
+  }
+
+  /** Nearby contacts (e.g. a tight formation) produce labels close enough to overlap
+   * illegibly — nudge later labels down (and re-check against everything already
+   * placed) until each one clears the labels already drawn this frame. */
+  _drawLabelsWithoutOverlap(ctx, labels) {
+    ctx.save();
+    ctx.font = '9px var(--font-mono), monospace';
+    const lineH = 11;
+    const placed = [];
+    for (const l of labels) {
+      const w = ctx.measureText(l.name).width + 4;
+      let y = l.y;
+      let attempts = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (attempts < 8) {
+        const collides = placed.some((p) => Math.abs(p.x - l.x) < (w + p.w) / 2 && Math.abs(p.y - y) < lineH);
+        if (!collides) break;
+        y += lineH;
+        attempts++;
+      }
+      placed.push({ x: l.x, y, w });
+      ctx.globalAlpha = l.alpha;
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.name, l.x, y);
+    }
+    ctx.restore();
   }
 
   _drawContactGlyph(ctx, domain) {

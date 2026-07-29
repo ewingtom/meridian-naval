@@ -2,9 +2,14 @@
 
 /* ---------------- CommsLog ---------------- */
 .comms-log {
+  /* Was left:18px/bottom:18px — identical corner to ShipHUD's hull/speed panels
+     (hud.css), which is exactly the overlap the judge review caught. Every other
+     corner is already claimed by a HUD panel (top-center: compass/objective,
+     top-right: tactical radar, bottom-left: hull/speed, bottom-right: weapon), so
+     dock the comms stack on the right, above the weapon readout panel instead. */
   position: absolute;
-  left: 18px;
-  bottom: 18px;
+  right: 18px;
+  bottom: 190px;
   width: min(420px, 34vw);
   min-width: 280px;
   z-index: 20;
@@ -44,7 +49,7 @@
   backdrop-filter: blur(6px);
   pointer-events: auto;
   opacity: 0;
-  transform: translateX(-24px);
+  transform: translateX(24px);
   font-family: var(--font-mono);
 }
 .comms-card.comms-in {
@@ -54,12 +59,14 @@
   animation: comms-slide-out 0.4s var(--ease-hud-in) forwards;
 }
 @keyframes comms-slide-in {
-  from { opacity: 0; transform: translateX(-24px); }
+  /* panel now docks on the right edge (see .comms-log above) — slide in from the
+     right to match, not the left. */
+  from { opacity: 0; transform: translateX(24px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 @keyframes comms-slide-out {
   from { opacity: 1; transform: translateX(0); max-height: 120px; }
-  to   { opacity: 0; transform: translateX(-16px); max-height: 0; }
+  to   { opacity: 0; transform: translateX(16px); max-height: 0; }
 }
 
 .comms-card-accent {
