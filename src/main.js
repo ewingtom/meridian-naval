@@ -222,11 +222,11 @@ const mainMenu = new MainMenu({
     mainMenu.hide();
     gameStarted = true;
     hud.show(); tacRadar.show();
-    canvas.requestPointerLock();
     if (!mission.started) {
       mission.start();
       world.spawnTaskForce(playerShip.group.position);
     }
+    showControlsIntro();
   },
   onContinue: () => {
     mainMenu.hide();
@@ -264,6 +264,49 @@ const stationBarEl = div(`position:fixed;top:14px;left:50%;transform:translateX(
   background:rgba(6,14,18,0.75);border:1px solid rgba(120,210,230,0.35);color:#4de8ff;
   font:12px ui-monospace,monospace;letter-spacing:0.12em;text-transform:uppercase;border-radius:3px;display:none;z-index:50;pointer-events:none;`);
 function div(css) { const d = document.createElement('div'); d.style.cssText = css; document.body.appendChild(d); return d; }
+
+// ---- controls intro: shown once per new patrol, on the deck before the mouse is
+// captured, so the player can read it without having to fight pointer lock. Only
+// covers the universal walk-around controls — station-specific ones (throttle/rudder,
+// weapon select/fire) are already taught contextually via stationBarEl the moment the
+// player sits down, so they're deliberately left out here (show, don't tell twice). ----
+const introEl = document.createElement('div');
+introEl.className = 'hud-panel';
+introEl.style.cssText = `
+  position:fixed; left:50%; bottom:9%; transform:translateX(-50%);
+  padding:20px 30px; z-index:70; display:none; min-width:320px; text-align:left;
+  animation: hud-fade-up 0.45s var(--ease-hud) both;
+`;
+introEl.innerHTML = `
+  <div class="hud-corners"></div>
+  <div class="hud-label" style="color:var(--c-cyan); margin-bottom:12px;">BRIDGE ORIENTATION</div>
+  <div style="display:grid; grid-template-columns:auto 1fr; gap:7px 20px; font:13px var(--font-mono); color:var(--c-text); white-space:nowrap;">
+    <span style="color:var(--c-cyan);">W&nbsp;A&nbsp;S&nbsp;D</span><span>Move about the ship</span>
+    <span style="color:var(--c-cyan);">MOUSE</span><span>Look around</span>
+    <span style="color:var(--c-cyan);">SHIFT</span><span>Sprint</span>
+    <span style="color:var(--c-cyan);">E</span><span>Interact / sit at a station</span>
+    <span style="color:var(--c-cyan);">ESC</span><span>Pause</span>
+  </div>
+  <div class="hud-label" style="margin-top:16px; opacity:0.7;">Click anywhere to take the deck</div>
+`;
+document.body.appendChild(introEl);
+
+function showControlsIntro() {
+  introEl.style.display = 'block';
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    introEl.style.display = 'none';
+    canvas.requestPointerLock();
+    window.removeEventListener('keydown', dismiss);
+    canvas.removeEventListener('click', dismiss);
+    clearTimeout(autoTimer);
+  };
+  window.addEventListener('keydown', dismiss);
+  canvas.addEventListener('click', dismiss);
+  const autoTimer = setTimeout(dismiss, 14000);
+}
 
 // ============================ PLAYER CONTROLLER ============================
 const playerController = new PlayerController({

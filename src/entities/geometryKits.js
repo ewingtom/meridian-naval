@@ -77,8 +77,12 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   hull.receiveShadow = true;
   group.add(hull);
 
-  // dark waterline boot stripe
-  const stripeGeo = new THREE.BoxGeometry(length * 0.92, 0.9, beam * 1.02);
+  // dark waterline boot stripe — the hull above went through rotateX+rotateY so its
+  // length axis ends up on local Z and beam on local X; BoxGeometry(w,h,d) puts its
+  // first arg on X, so args here must be (beam, height, length), NOT (length, height,
+  // beam), or you get a ~100m-wide slab jutting out sideways through the hull instead
+  // of a thin stripe running fore-and-aft along it.
+  const stripeGeo = new THREE.BoxGeometry(beam * 1.02, 0.9, length * 0.92);
   const stripe = new THREE.Mesh(stripeGeo, mat('enemyStripe', 0x0c0e10, 0.6, 0.2));
   stripe.position.set(0, 0.3, 0);
   group.add(stripe);
@@ -138,7 +142,7 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
 /** Submarine — tapered hull (lathed profile) + sail with planes, mostly submerged. */
 export function buildSubmarineMesh() {
   const group = new THREE.Group();
-  const bodyMat = texturedMat('subBodyTex', 'darkHull', { baseColor: [0.11, 0.12, 0.13], panelCols: 6, panelRows: 10, rustAmount: 0.15, rustColor: [0.18, 0.14, 0.12] }, 6, 2, { metalness: 0.55, normalScale: 0.6 });
+  const bodyMat = texturedMat('subBodyTex', 'darkHull', { baseColor: [0.15, 0.16, 0.17], panelCols: 7, panelRows: 12, rustAmount: 0.3, rustColor: [0.22, 0.17, 0.14] }, 9, 4, { metalness: 0.5, normalScale: 1.0 });
 
   // Tapered teardrop hull via a lathed profile (bow taper -> parallel body -> stern taper)
   const profile = [
@@ -146,7 +150,7 @@ export function buildSubmarineMesh() {
     new THREE.Vector2(3.6, -10), new THREE.Vector2(3.7, 5), new THREE.Vector2(3.5, 16),
     new THREE.Vector2(2.6, 24), new THREE.Vector2(1.2, 28.5), new THREE.Vector2(0.0, 30),
   ];
-  const hullGeo = new THREE.LatheGeometry(profile, 16);
+  const hullGeo = new THREE.LatheGeometry(profile, 24);
   hullGeo.rotateZ(Math.PI / 2);
   const hull = new THREE.Mesh(hullGeo, bodyMat);
   hull.castShadow = true;
@@ -204,8 +208,8 @@ export function buildAircraftMesh(iffColor = 0x8a2f2f) {
   const group = new THREE.Group();
   const skinColor = new THREE.Color(iffColor);
   const m = texturedMat('aircraftSkinTex_' + iffColor, 'aircraftSkin_' + iffColor,
-    { baseColor: [skinColor.r, skinColor.g, skinColor.b], panelCols: 4, panelRows: 8, rustAmount: 0.1, rustColor: [skinColor.r * 0.4, skinColor.g * 0.4, skinColor.b * 0.4] },
-    3, 5, { metalness: 0.6, roughness: 0.7, normalScale: 0.45 });
+    { baseColor: [skinColor.r, skinColor.g, skinColor.b], panelCols: 5, panelRows: 10, rustAmount: 0.15, rustColor: [skinColor.r * 0.4, skinColor.g * 0.4, skinColor.b * 0.4] },
+    6, 10, { metalness: 0.6, roughness: 0.7, normalScale: 0.8 });
   const darkM = mat('aircraftDark', 0x1a1a1c, 0.3, 0.5);
   const glassM = mat('aircraftGlass', 0x1c2e38, 0.15, 0.7);
 
@@ -215,7 +219,7 @@ export function buildAircraftMesh(iffColor = 0x8a2f2f) {
     new THREE.Vector2(0.7, -0.5), new THREE.Vector2(0.68, 1.8), new THREE.Vector2(0.5, 3.4),
     new THREE.Vector2(0.28, 4.4), new THREE.Vector2(0.0, 4.9),
   ];
-  const fuseGeo = new THREE.LatheGeometry(profile, 12);
+  const fuseGeo = new THREE.LatheGeometry(profile, 18);
   fuseGeo.rotateZ(Math.PI / 2);
   const fuselage = new THREE.Mesh(fuseGeo, m);
   fuselage.castShadow = true;

@@ -58,9 +58,20 @@ export function buildHullTextureSet({
   }
   ctx.putImageData(img, 0, 0);
 
+  // Panel-line/rivet contrast relative to base luminance — a fixed near-black line
+  // (as this used to be, unconditionally) is invisible against an already-dark hull
+  // like the submarine's, which is exactly why it read as flat. Go lighter on dark
+  // hulls, darker on light ones, so the seams always actually show up.
+  const baseLum = 0.2126 * baseColor[0] + 0.7152 * baseColor[1] + 0.0722 * baseColor[2];
+  const lineIsLight = baseLum < 0.35;
+  const lineRGB = lineIsLight ? '255,255,255' : '8,8,10';
+  const lineAlpha = lineIsLight ? 0.5 : 0.6;
+  const rivetRGB = lineIsLight ? '235,238,240' : '0,0,0';
+  const rivetAlpha = lineIsLight ? 0.55 : 0.4;
+
   // panel-line grid (slightly irregular pitch so it doesn't look like a spreadsheet)
-  ctx.strokeStyle = 'rgba(10,10,12,0.55)';
-  ctx.lineWidth = Math.max(1, size / 340);
+  ctx.strokeStyle = `rgba(${lineRGB},${lineAlpha})`;
+  ctx.lineWidth = Math.max(1, size / 300);
   const colXs = [0];
   for (let i = 1; i < panelCols; i++) colXs.push((i / panelCols + (hash(i, seed) - 0.5) * 0.02) * size);
   colXs.push(size);
@@ -71,7 +82,7 @@ export function buildHullTextureSet({
   for (const y of rowYs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke(); markSeamHeight(heightData, size, y, false); }
 
   // rivet dots at panel corners (cheap greeble that reads well at a distance)
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillStyle = `rgba(${rivetRGB},${rivetAlpha})`;
   for (const x of colXs.slice(1, -1)) {
     for (const y of rowYs.slice(1, -1)) {
       for (const [ox, oy] of [[-10, -10], [10, -10], [-10, 10], [10, 10]]) {
