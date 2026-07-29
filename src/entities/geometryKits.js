@@ -1,9 +1,53 @@
 import * as THREE from 'three';
+import { getSharedHullTextures } from '../utils/ProceduralTextures.js';
+
+/** THREE.ExtrudeGeometry built from a custom Shape (moveTo/lineTo, not a primitive)
+ * emits UVs in raw shape-space coordinates, not normalized 0-1 — so a `repeat` value
+ * chosen for "N tiles across the surface" silently tiles thousands of times over and
+ * aliases into a flat grey smear once mipmapped. Remap to 0-1 so `repeat` behaves the
+ * way texturedMat()'s callers expect. (Primitive geometries — Box/Cylinder/Lathe/Cone/
+ * Sphere — already normalize correctly and don't need this.)
+ */
+function normalizeUVs(geometry) {
+  const uv = geometry.attributes.uv;
+  if (!uv) return geometry;
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  for (let i = 0; i < uv.count; i++) {
+    const u = uv.getX(i), v = uv.getY(i);
+    if (u < minU) minU = u; if (u > maxU) maxU = u;
+    if (v < minV) minV = v; if (v > maxV) maxV = v;
+  }
+  const du = maxU - minU || 1, dv = maxV - minV || 1;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, (uv.getX(i) - minU) / du, (uv.getY(i) - minV) / dv);
+  }
+  uv.needsUpdate = true;
+  return geometry;
+}
 
 const matCache = {};
 function mat(key, color, roughness = 0.55, metalness = 0.4) {
   if (!matCache[key]) matCache[key] = new THREE.MeshStandardMaterial({ color, roughness, metalness });
   return matCache[key];
+}
+
+/** Textured hull material: shares one generated canvas texture set per preset, but
+ * each surface gets its own cloned map (with its own `.repeat`) since a ship hull
+ * and a small sail panel need very different tiling density from the same source. */
+function texturedMat(key, preset, presetOpts, repeatX, repeatY, { roughness = 1, metalness = 0.35, normalScale = 0.7, colorMul = 1 } = {}) {
+  if (matCache[key]) return matCache[key];
+  const src = getSharedHullTextures(preset, presetOpts);
+  const map = src.map.clone(); map.needsUpdate = true;
+  const normalMap = src.normalMap.clone(); normalMap.needsUpdate = true;
+  const roughnessMap = src.roughnessMap.clone(); roughnessMap.needsUpdate = true;
+  for (const t of [map, normalMap, roughnessMap]) { t.repeat.set(repeatX, repeatY); t.wrapS = t.wrapT = THREE.RepeatWrapping; }
+  const m = new THREE.MeshStandardMaterial({
+    map, normalMap, roughnessMap, roughness, metalness,
+    normalScale: new THREE.Vector2(normalScale, normalScale),
+  });
+  if (colorMul !== 1) m.color.setScalar(colorMul);
+  matCache[key] = m;
+  return m;
 }
 
 /** Small/medium hostile surface combatant — distinct silhouette from the player hero ship. */
@@ -22,12 +66,13 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   hullShape.lineTo(-half * 0.2, -beam * 0.5);
   hullShape.lineTo(-half, -beam * 0.3);
   hullShape.lineTo(-half * 0.96, 0);
-  const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: deckY, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3, bevelSegments: 2, steps: 1 });
+  const hullGeo = normalizeUVs(new THREE.ExtrudeGeometry(hullShape, { depth: deckY, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3, bevelSegments: 2, steps: 1 }));
   hullGeo.rotateX(-Math.PI / 2);
   hullGeo.rotateY(Math.PI / 2);
   // naval haze-grey hull (not a solid IFF-colour paint job — real ships aren't painted
   // that way); IFF colour is reserved for small trim/marking accents instead.
-  const hull = new THREE.Mesh(hullGeo, mat('enemyHull', 0x6b7178, 0.6, 0.35));
+  const hullMat = texturedMat('enemyHullTex', 'navalGrey', { baseColor: [0.44, 0.46, 0.49], panelCols: 9, panelRows: 4, rustAmount: 0.4 }, 9, 3);
+  const hull = new THREE.Mesh(hullGeo, hullMat);
   hull.castShadow = true;
   hull.receiveShadow = true;
   group.add(hull);
@@ -38,14 +83,14 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   stripe.position.set(0, 0.3, 0);
   group.add(stripe);
 
-  const superMat = mat('enemySuper', 0x545a60, 0.5, 0.3);
+  const superMat = texturedMat('enemySuperTex', 'navalGreySuper', { baseColor: [0.52, 0.54, 0.57], panelCols: 5, panelRows: 5, rustAmount: 0.2 }, 3, 3, { normalScale: 0.5 });
   const glassMat = mat('enemyGlass', 0x121a20, 0.2, 0.6);
 
   // angled bridge block (tapered, not a plain box) with a dark window band
   const bridgeShape = new THREE.Shape();
   bridgeShape.moveTo(-4.2, 0); bridgeShape.lineTo(4.2, 0);
   bridgeShape.lineTo(3.4, 6); bridgeShape.lineTo(-3.4, 6); bridgeShape.lineTo(-4.2, 0);
-  const bridgeGeo = new THREE.ExtrudeGeometry(bridgeShape, { depth: 11, bevelEnabled: false });
+  const bridgeGeo = normalizeUVs(new THREE.ExtrudeGeometry(bridgeShape, { depth: 11, bevelEnabled: false }));
   bridgeGeo.rotateX(-Math.PI / 2);
   bridgeGeo.translate(0, deckY, 2.5);
   const bridge = new THREE.Mesh(bridgeGeo, superMat);
@@ -87,19 +132,13 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
     group.add(rail);
   }
 
-  // small IFF/faction marking accent on the hull side (this is where iffColor shows up)
-  const marking = new THREE.Mesh(new THREE.PlaneGeometry(4, 2), mat('enemyMark_' + iffColor, iffColor, 0.6, 0.1));
-  marking.position.set(30, deckY - 1.5, beam * 0.501);
-  marking.rotation.y = Math.PI / 2;
-  group.add(marking);
-
   return { group, length, beam, deckY };
 }
 
 /** Submarine — tapered hull (lathed profile) + sail with planes, mostly submerged. */
 export function buildSubmarineMesh() {
   const group = new THREE.Group();
-  const bodyMat = mat('subBody', 0x1c1f22, 0.45, 0.55);
+  const bodyMat = texturedMat('subBodyTex', 'darkHull', { baseColor: [0.11, 0.12, 0.13], panelCols: 6, panelRows: 10, rustAmount: 0.15, rustColor: [0.18, 0.14, 0.12] }, 6, 2, { metalness: 0.55, normalScale: 0.6 });
 
   // Tapered teardrop hull via a lathed profile (bow taper -> parallel body -> stern taper)
   const profile = [
@@ -121,7 +160,7 @@ export function buildSubmarineMesh() {
   sailShape.lineTo(2.8, 5.6);
   sailShape.lineTo(3.6, 0);
   sailShape.lineTo(-4.5, 0);
-  const sailGeo = new THREE.ExtrudeGeometry(sailShape, { depth: 2.6, bevelEnabled: true, bevelSize: 0.15, bevelThickness: 0.15, bevelSegments: 1 });
+  const sailGeo = normalizeUVs(new THREE.ExtrudeGeometry(sailShape, { depth: 2.6, bevelEnabled: true, bevelSize: 0.15, bevelThickness: 0.15, bevelSegments: 1 }));
   sailGeo.rotateX(-Math.PI / 2);
   sailGeo.translate(0, 3.5, 4);
   sailGeo.rotateY(0);
@@ -163,7 +202,10 @@ export function buildSubmarineMesh() {
 /** Attack aircraft — swept delta wing + tapered fuselage + canopy + twin canted tails. */
 export function buildAircraftMesh(iffColor = 0x8a2f2f) {
   const group = new THREE.Group();
-  const m = mat('aircraft_' + iffColor, iffColor, 0.38, 0.55);
+  const skinColor = new THREE.Color(iffColor);
+  const m = texturedMat('aircraftSkinTex_' + iffColor, 'aircraftSkin_' + iffColor,
+    { baseColor: [skinColor.r, skinColor.g, skinColor.b], panelCols: 4, panelRows: 8, rustAmount: 0.1, rustColor: [skinColor.r * 0.4, skinColor.g * 0.4, skinColor.b * 0.4] },
+    3, 5, { metalness: 0.6, roughness: 0.7, normalScale: 0.45 });
   const darkM = mat('aircraftDark', 0x1a1a1c, 0.3, 0.5);
   const glassM = mat('aircraftGlass', 0x1c2e38, 0.15, 0.7);
 
@@ -193,7 +235,7 @@ export function buildAircraftMesh(iffColor = 0x8a2f2f) {
   wingShape.lineTo(-2.6, 4.6);
   wingShape.lineTo(0.2, 0.6);
   wingShape.lineTo(0.9, 0);
-  const wingGeo = new THREE.ExtrudeGeometry(wingShape, { depth: 0.12, bevelEnabled: true, bevelSize: 0.04, bevelThickness: 0.04, bevelSegments: 1 });
+  const wingGeo = normalizeUVs(new THREE.ExtrudeGeometry(wingShape, { depth: 0.12, bevelEnabled: true, bevelSize: 0.04, bevelThickness: 0.04, bevelSegments: 1 }));
   wingGeo.rotateX(-Math.PI / 2);
   wingGeo.translate(-0.4, -0.06, 0);
   const wingR = new THREE.Mesh(wingGeo, m);

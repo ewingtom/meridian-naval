@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ShipPhysics } from './ShipPhysics.js';
 import { buildPlaceholderShip } from './ShipPlaceholder.js';
+import { getSharedMicroDetailMaps } from '../utils/ProceduralTextures.js';
 
 const MODEL_URL = '/src/assets/models/player_ship.glb';
 
@@ -38,6 +39,7 @@ export class PlayerShip {
           o.receiveShadow = true;
         }
       });
+      this._addMicroDetailMaps(loaded);
 
       // The Blender export's long axis is local +X (bow), but the whole game
       // (mount points, physics.forward, camera framing) assumes bow = +Z.
@@ -58,6 +60,39 @@ export class PlayerShip {
       // eslint-disable-next-line no-console
       console.log('[PlayerShip] High-detail model not available yet, using placeholder.', err?.message || err);
     }
+  }
+
+  /** The Blender-baked materials shipped with flat albedo and zero normal maps
+   * (they read as a perfectly smooth painted surface even close up). Layer a
+   * high-frequency procedural micro-scratch/brushed-metal normal+roughness map
+   * on top at a steep repeat so it reads as real surface micro-detail without
+   * needing to match the model's actual UV layout. */
+  _addMicroDetailMaps(root) {
+    const { normalMap: srcNormal, roughnessMap: srcRough } = getSharedMicroDetailMaps();
+    const seen = new Set();
+    root.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const mat of mats) {
+        if (seen.has(mat.uuid)) continue;
+        seen.add(mat.uuid);
+        if (!mat.isMeshStandardMaterial && !mat.isMeshPhysicalMaterial) continue;
+        // skip glass/transparent surfaces (bridge windows etc.) — scratches on glass read wrong
+        if (mat.transparent || mat.opacity < 0.95) continue;
+        if (!mat.normalMap) {
+          const n = srcNormal.clone(); n.needsUpdate = true;
+          n.repeat.set(120, 120); n.wrapS = n.wrapT = THREE.RepeatWrapping;
+          mat.normalMap = n;
+          mat.normalScale = new THREE.Vector2(0.35, 0.35);
+        }
+        if (!mat.roughnessMap) {
+          const r = srcRough.clone(); r.needsUpdate = true;
+          r.repeat.set(120, 120); r.wrapS = r.wrapT = THREE.RepeatWrapping;
+          mat.roughnessMap = r;
+        }
+        mat.needsUpdate = true;
+      }
+    });
   }
 
   _extractMountPoints(root) {
