@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 
 let _nextId = 1;
+/** Shared with CrewedShip so escort/player ship ids never collide with entity ids —
+ * both live in the same id-keyed lookups (radar contact selection, weapon targeting). */
+export function allocEntityId() {
+  return _nextId++;
+}
 
 export const Domain = { SURFACE: 'SURFACE', SUBSURFACE: 'SUBSURFACE', AIR: 'AIR' };
 export const IFF = { FRIENDLY: 'FRIENDLY', HOSTILE: 'HOSTILE', UNKNOWN: 'UNKNOWN', NEUTRAL: 'NEUTRAL' };
@@ -11,7 +16,7 @@ export const IFF = { FRIENDLY: 'FRIENDLY', HOSTILE: 'HOSTILE', UNKNOWN: 'UNKNOWN
  */
 export class Entity {
   constructor({ name, domain, iff, maxHealth = 100, position = new THREE.Vector3() }) {
-    this.id = _nextId++;
+    this.id = allocEntityId();
     this.name = name;
     this.domain = domain;
     this.iff = iff;

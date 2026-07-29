@@ -104,6 +104,18 @@ export class MissionSystem {
     if (next >= 0 && next > this.beatIndex) this._runBeat(next);
   }
 
+  /** Multiplayer: jump straight to a beat the host has already reached, replaying its
+   * comms/objective locally (so every client's narrative/objective text stays in sync
+   * even though each client still evaluates its own world independently). Never moves
+   * backward — a client that locally advanced ahead of a stale/in-flight broadcast
+   * just ignores it rather than snapping back. */
+  syncBeat(idx) {
+    if (idx <= this.beatIndex && this.started) return;
+    this.started = true;
+    this._started = true;
+    this._runBeat(idx);
+  }
+
   get currentWaypoint() {
     const beat = BEATS[this.beatIndex];
     if (beat?.objective?.useWaypoint != null) return this.waypoints[beat.objective.useWaypoint];

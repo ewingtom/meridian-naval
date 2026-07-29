@@ -134,11 +134,20 @@ void main() {
   // Fine ripple detail via layered noise-driven normal perturbation
   vec2 rp = vWorldPos.xz * 0.06 + uTime * 0.035;
   float n1 = fbm(rp);
-  float n2 = fbm(rp * 2.7 + 11.0 - uTime * 0.02);
   vec2 grad = vec2(n1 - fbm(rp + vec2(0.6, 0.0)), n1 - fbm(rp + vec2(0.0, 0.6)));
-  vec3 detailNormal = normalize(vec3(grad.x * 1.4, 1.0, grad.y * 1.4));
 
-  vec3 N = normalize(mix(vNormal, normalize(vNormal + detailNormal * 0.55), 0.75));
+  // Second, much higher-frequency micro-ripple layer. This is what actually reads as
+  // "crisp" sun glitter rather than "soft": real ocean sparkle comes from high-frequency
+  // slope variance breaking a highlight into many small glints, not from the low-freq
+  // layer alone (which just makes broad, smeared crescents). Kept low-amplitude so it
+  // perturbs the specular response without visibly roughening the base water shading.
+  vec2 rp2 = vWorldPos.xz * 0.34 - uTime * 0.05;
+  float n2 = fbm(rp2);
+  vec2 grad2 = vec2(n2 - fbm(rp2 + vec2(0.35, 0.0)), n2 - fbm(rp2 + vec2(0.0, 0.35)));
+
+  vec3 detailNormal = normalize(vec3(grad.x * 1.4 + grad2.x * 0.6, 1.0, grad.y * 1.4 + grad2.y * 0.6));
+
+  vec3 N = normalize(mix(vNormal, normalize(vNormal + detailNormal * 0.6), 0.8));
 
   float NdotV = clamp(dot(N, viewDir), 0.0, 1.0);
   float fresnel = pow(1.0 - NdotV, 5.0);
@@ -158,27 +167,43 @@ void main() {
   // clipped white blob. Keep the core tight and soft-clamp the peak instead of letting
   // it run away, so bloom sees a field of small sparkles rather than one flashbulb.
   vec3 halfDir = normalize(uSunDirection + viewDir);
-  float specRaw = pow(clamp(dot(N, halfDir), 0.0, 1.0), 900.0);
+  float NdotH = clamp(dot(N, halfDir), 0.0, 1.0);
+  float specRaw = pow(NdotH, 900.0);
   float spec = min(specRaw * 0.9, 0.9);
-  float sparkle = smoothstep(0.96, 1.0, noise(vWorldPos.xz * 6.0 + uTime * 1.7));
-  float glitter = pow(clamp(dot(N, halfDir), 0.0, 1.0), 260.0) * sparkle * 0.9;
-  vec3 sunSpec = uSunColor * (spec + glitter) * (0.4 + 0.6 * vFresnelBoost);
+  // Tight secondary lobe: a much higher exponent than the base lobe, low weight, layered
+  // underneath it. It only lights up the exact peak of each glint (a tiny fraction of the
+  // pixels the base lobe already covers), giving the highlight a hard, defined core
+  // instead of one uniformly-soft blob — without materially raising the energy the broad
+  // lobe already sends into bloom, so it doesn't reopen the old clipped-sunpath bug.
+  float specCore = pow(NdotH, 3000.0) * 0.4;
+  float sparkle = smoothstep(0.965, 1.0, noise(vWorldPos.xz * 9.0 + uTime * 1.9));
+  float glitter = pow(NdotH, 260.0) * sparkle * 0.9;
+  vec3 sunSpec = uSunColor * (spec + specCore + glitter) * (0.4 + 0.6 * vFresnelBoost);
 
-  // Foam
+  // Foam — multi-scale so crests read as organic streaks, not noise speckles
   float foamNoise = fbm(vWorldPos.xz * 0.35 + uTime * 0.12);
-  float foamMask = clamp(vFoamFactor * 1.4 - 0.25, 0.0, 1.0);
-  foamMask *= smoothstep(0.25, 0.75, foamNoise + vFoamFactor * 0.3);
-  vec3 foamColor = vec3(0.95, 0.98, 1.0);
+  float foamFine = fbm(vWorldPos.xz * 1.4 - uTime * 0.2);
+  float foamMask = clamp(vFoamFactor * 1.55 - 0.18, 0.0, 1.0);
+  foamMask *= smoothstep(0.2, 0.78, foamNoise * 0.65 + foamFine * 0.35 + vFoamFactor * 0.25);
+  vec3 foamColor = vec3(0.92, 0.96, 0.99);
 
-  vec3 base = mix(waterColor, reflColor, fresnel * 0.92);
-  base += sunSpec;
+  // Distant water deepens + desaturates (beer-lambert-ish) so the near field pops
+  float dist = length(uCamPos - vWorldPos);
+  float absorb = 1.0 - exp(-dist * 0.00035);
+  waterColor = mix(waterColor, uDeepColor * 0.72, absorb * 0.65);
+
+  // Stronger env reflection near horizon (grazing angles)
+  float horizonBoost = pow(1.0 - clamp(N.y, 0.0, 1.0), 2.5);
+  vec3 base = mix(waterColor, reflColor, fresnel * 0.88 + horizonBoost * 0.25);
+  base += sunSpec * (1.0 + horizonBoost * 0.5);
   base = mix(base, foamColor, foamMask);
 
-  // Distance fog blending to sky/horizon colour
-  float dist = length(uCamPos - vWorldPos);
+  // Distance fog — dithered in the grade pass; keep soft here
   float fog = 1.0 - exp(-dist * uFogDensity);
   fog = clamp(fog, 0.0, 1.0);
-  vec3 color = mix(base, uFogColor, fog);
+  // Keep a touch more water color at mid range so the ocean doesn't go to flat haze
+  fog *= smoothstep(0.0, 1.0, fog);
+  vec3 color = mix(base, uFogColor, fog * 0.92);
 
   gl_FragColor = vec4(color, 1.0);
 }

@@ -139,6 +139,90 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   return { group, length, beam, deckY };
 }
 
+/** Neutral merchant/tanker — larger, slab-sided civilian hull with a rust-orange
+ * boot-topping and cream upperworks (a deliberately warm, distinctly non-military
+ * paint scheme), aft-mounted deckhouse + funnel, and simple cargo-boom greebles.
+ * No armament, no radar mast, no gun — reads as "not a combatant" at a glance,
+ * the way the haze-grey combatant hulls above deliberately don't distinguish IFF. */
+export function buildMerchantShipMesh() {
+  const group = new THREE.Group();
+  const length = 150, beam = 21, deckY = 9.5;
+  const half = length / 2;
+
+  const hullShape = new THREE.Shape();
+  hullShape.moveTo(-half * 0.98, 0);
+  hullShape.lineTo(-half, beam * 0.32);
+  hullShape.lineTo(-half * 0.7, beam * 0.5);
+  hullShape.lineTo(half * 0.55, beam * 0.5);
+  hullShape.lineTo(half * 0.94, beam * 0.18);
+  hullShape.lineTo(half, 0);
+  hullShape.lineTo(half * 0.94, -beam * 0.18);
+  hullShape.lineTo(half * 0.55, -beam * 0.5);
+  hullShape.lineTo(-half * 0.7, -beam * 0.5);
+  hullShape.lineTo(-half, -beam * 0.32);
+  hullShape.lineTo(-half * 0.98, 0);
+  const hullGeo = normalizeUVs(new THREE.ExtrudeGeometry(hullShape, { depth: deckY, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3, bevelSegments: 2, steps: 1 }));
+  hullGeo.rotateX(-Math.PI / 2);
+  hullGeo.rotateY(Math.PI / 2);
+  const hullMat = texturedMat('merchantHullTex', 'merchantRust', { baseColor: [0.66, 0.35, 0.16], panelCols: 8, panelRows: 5, rustAmount: 0.6, rustColor: [0.22, 0.12, 0.08] }, 8, 3);
+  const hull = new THREE.Mesh(hullGeo, hullMat);
+  hull.castShadow = true;
+  hull.receiveShadow = true;
+  group.add(hull);
+
+  // dark waterline boot stripe, same convention as the combatant hull above
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(beam * 1.02, 0.9, length * 0.92), mat('merchantStripe', 0x0c0e10, 0.6, 0.2));
+  stripe.position.set(0, 0.3, 0);
+  group.add(stripe);
+
+  // cream/tan upper-hull freeboard band — warm, not the naval haze-grey used above
+  const upperMat = texturedMat('merchantUpperTex', 'merchantCream', { baseColor: [0.78, 0.75, 0.65], panelCols: 8, panelRows: 2, rustAmount: 0.15 }, 8, 1, { normalScale: 0.4 });
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(beam * 0.94, deckY * 0.32, length * 0.9), upperMat);
+  upper.position.set(0, deckY * 0.86, 0);
+  group.add(upper);
+
+  // aft-mounted deckhouse/bridge (merchant ships stack accommodation+bridge over the
+  // engine room at the stern, unlike the amidships bridge on the combatant above)
+  const houseMat = texturedMat('merchantHouseTex', 'merchantCream', { baseColor: [0.8, 0.77, 0.67], panelCols: 4, panelRows: 6, rustAmount: 0.12 }, 3, 4, { normalScale: 0.4 });
+  const glassMat = mat('merchantGlass', 0x121a20, 0.2, 0.6);
+  const houseZ = -half * 0.68;
+  const house = new THREE.Mesh(new THREE.BoxGeometry(beam * 0.72, 12, 16), houseMat);
+  house.position.set(0, deckY + 6, houseZ);
+  house.castShadow = true;
+  group.add(house);
+  const windowBand = new THREE.Mesh(new THREE.BoxGeometry(beam * 0.6, 1.3, 0.15), glassMat);
+  windowBand.position.set(0, deckY + 11, houseZ + 8.05);
+  group.add(windowBand);
+
+  const funnel = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.9, 6, 10), mat('merchantFunnel', 0x8a2f2f, 0.7, 0.1));
+  funnel.position.set(0, deckY + 15, houseZ - 3);
+  funnel.castShadow = true;
+  group.add(funnel);
+
+  // deck cargo gear — king-post + boom pairs, a cheap greeble that reads as "working
+  // ship" silhouette from a distance without adding real geometric weight
+  const postMat = mat('merchantPost', 0x3c4046, 0.6, 0.4);
+  for (const z of [half * 0.25, -half * 0.15]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 9, 6), postMat);
+    post.position.set(0, deckY + 4.5, z);
+    group.add(post);
+    const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 11, 6), postMat);
+    boom.rotation.z = Math.PI / 2.6;
+    boom.position.set(0, deckY + 7.5, z + 3);
+    group.add(boom);
+  }
+
+  // deck-edge railings, same convention as the combatant hull above
+  const railMat = mat('merchantRail', 0x2a2e32, 0.6, 0.4);
+  for (const side of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.6, 0.6, 0.08), railMat);
+    rail.position.set(-4, deckY + 0.9, side * beam * 0.47);
+    group.add(rail);
+  }
+
+  return { group, length, beam, deckY };
+}
+
 /** Submarine — tapered hull (lathed profile) + sail with planes, mostly submerged. */
 export function buildSubmarineMesh() {
   const group = new THREE.Group();

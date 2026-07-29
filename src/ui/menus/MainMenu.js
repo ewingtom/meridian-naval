@@ -73,12 +73,16 @@ export class MainMenu {
             <span class="meridian-btn-index">02</span>
             <span class="meridian-btn-label">Continue</span>
           </button>
-          <button class="meridian-btn" data-action="settings" style="--i:2">
+          <button class="meridian-btn" data-action="multiplayer" style="--i:2">
             <span class="meridian-btn-index">03</span>
+            <span class="meridian-btn-label">Multiplayer</span>
+          </button>
+          <button class="meridian-btn" data-action="settings" style="--i:3">
+            <span class="meridian-btn-index">04</span>
             <span class="meridian-btn-label">Settings</span>
           </button>
-          <button class="meridian-btn" data-action="credits" style="--i:3">
-            <span class="meridian-btn-index">04</span>
+          <button class="meridian-btn" data-action="credits" style="--i:4">
+            <span class="meridian-btn-index">05</span>
             <span class="meridian-btn-label">Credits</span>
           </button>
         </nav>
@@ -106,6 +110,7 @@ export class MainMenu {
       if (this.options.continueEnabled === false) return;
       this.options.onContinue?.();
     });
+    this.root.querySelector('[data-action="multiplayer"]').addEventListener('click', () => this.options.onMultiplayer?.());
     this.root.querySelector('[data-action="settings"]').addEventListener('click', () => this.options.onSettings?.());
     this.root.querySelector('[data-action="credits"]').addEventListener('click', () => this.options.onCredits?.());
 

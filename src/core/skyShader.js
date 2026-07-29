@@ -13,8 +13,8 @@ export const SkyShader = {
     uZenithColor: { value: new Color(0x1c4d86) },
     uHorizonColor: { value: new Color(0xaecbdd) },
     uSunColor: { value: new Color(0xfff2d6) },
-    uCloudCoverage: { value: 0.28 },
-    uCloudiness: { value: 0.88 },
+    uCloudCoverage: { value: 0.22 },
+    uCloudiness: { value: 0.92 },
     uCloudColorLit: { value: new Color(0xffffff) },
     uCloudColorShadow: { value: new Color(0x415164) },
     uTime: { value: 0 },
@@ -72,6 +72,21 @@ export const SkyShader = {
       float lowBand = 1.0 - smoothstep(0.0, 0.22, elevation);
       sky = mix(sky, sky + vec3(0.05, 0.02, -0.02), lowBand * 0.5);
 
+      // Directional aerial-perspective haze: real skies are visibly brighter and warmer
+      // in a band around the sun's azimuth near the horizon (forward Mie scattering),
+      // and slightly darker/cooler on the anti-sun side. A horizonColor that's flat in
+      // every direction is one of the biggest "cheap CG sky" tells — this breaks that up
+      // and gives the sky a sense of depth/directionality without touching the base
+      // gradient uniforms (still fully driven by uZenithColor/uHorizonColor).
+      vec3 horizDirN = normalize(vec3(dir.x, 0.0, dir.z));
+      vec3 horizSunN = normalize(vec3(uSunDirection.x, 0.0, uSunDirection.z));
+      float sunAz = dot(horizDirN, horizSunN);
+      float hazeBand = (1.0 - smoothstep(0.0, 0.5, elevation)) * clamp(elevation * 4.0 + 0.15, 0.0, 1.0);
+      float hazeDir = sunAz * 0.5 + 0.5;
+      vec3 hazeWarm = vec3(0.07, 0.032, -0.034) * pow(hazeDir, 2.0);
+      vec3 hazeCool = vec3(-0.016, -0.006, 0.012) * pow(1.0 - hazeDir, 2.0);
+      sky += (hazeWarm + hazeCool) * hazeBand;
+
       // below-horizon (looking down toward sea from a height, sky box interior) — keep consistent with horizon color
       if (elevation < 0.0) {
         sky = uHorizonColor * 0.9;
@@ -79,10 +94,10 @@ export const SkyShader = {
 
       // sun disc / corona / halo
       float sunDot = dot(dir, normalize(uSunDirection));
-      float sunDisc = smoothstep(0.99930, 0.99985, sunDot);
-      float corona = pow(clamp(sunDot, 0.0, 1.0), 340.0) * 0.8;
-      float halo = pow(clamp(sunDot, 0.0, 1.0), 12.0) * 0.22;
-      vec3 sunContribution = uSunColor * (sunDisc * 8.0 + corona * 4.0 + halo);
+      float sunDisc = smoothstep(0.99920, 0.99982, sunDot);
+      float corona = pow(clamp(sunDot, 0.0, 1.0), 280.0) * 1.15;
+      float halo = pow(clamp(sunDot, 0.0, 1.0), 9.0) * 0.32;
+      vec3 sunContribution = uSunColor * (sunDisc * 14.0 + corona * 5.5 + halo);
 
       // cloud layer — simple spherical (azimuth, elevation) sky-dome UV, robust at all angles
       float cloudFade = smoothstep(0.0, 0.12, elevation) * (1.0 - smoothstep(0.7, 1.0, elevation));

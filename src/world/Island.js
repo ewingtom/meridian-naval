@@ -24,10 +24,18 @@ function fbm(x, y, octaves = 5) {
  * A small landfall island: procedurally sculpted terrain (sand -> rock -> grass by
  * height/slope), a beach ring fading into the sea, scattered rock/vegetation dressing,
  * and a lighthouse landmark. Everything generated at runtime, no external assets.
+ *
+ * `seed` offsets the noise sampling coordinates so a second call with the same
+ * radius/peak doesn't produce byte-identical terrain — without it every island of a
+ * given size would be indistinguishable since the fbm fields are purely a function of
+ * local vertex x/z. `rockCount`/`scrubCount`/`lighthouse` let a small islet dial down
+ * dressing density (and skip the landmark) rather than looking like a shrunken clone
+ * of the main island.
  */
-export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
+export function buildIsland({ radius = 260, peak = 58, segments = 128, seed = 0, rockCount = 60, scrubCount = 140, lighthouse = true } = {}) {
   const group = new THREE.Group();
   group.name = 'Island';
+  const sx = seed * 517.3, sz = seed * 291.7; // noise-sampling offset, in fbm coordinate space
 
   // Plane only needs a small margin beyond the island's own falloff radius — too
   // large a margin leaves a wide flat "sea-level filler" ring that flickers against
@@ -49,8 +57,8 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
 
     // radial falloff (island silhouette) combined with fbm for natural ruggedness
     const falloff = Math.max(0, 1 - Math.pow(d, 2.1));
-    const n = fbm(x * 0.012, z * 0.012, 5);
-    const ridge = fbm(x * 0.035 + 40, z * 0.035 + 40, 3);
+    const n = fbm(x * 0.012 + sx, z * 0.012 + sz, 5);
+    const ridge = fbm(x * 0.035 + 40 + sx, z * 0.035 + 40 + sz, 3);
     let h = falloff * peak * (0.55 + 0.65 * n) - ridge * 6 * falloff;
     // sink anything beyond the island's own silhouette well below sea level (and any
     // plausible wave trough) instead of leaving it at a contested y=0 — this is what
@@ -63,7 +71,7 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
 
     pos.setY(i, h);
 
-    const slope = Math.abs(n - fbm(x * 0.012 + 0.6, z * 0.012, 5));
+    const slope = Math.abs(n - fbm(x * 0.012 + 0.6 + sx, z * 0.012 + sz, 5));
     let c;
     if (h < 1.2) c = tmp.copy(sand);
     else if (h < 9) c = tmp.copy(sand).lerp(grass, THREE.MathUtils.smoothstep(h, 1.2, 9));
@@ -84,7 +92,6 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
   // scattered rocks
   const rockGeo = new THREE.DodecahedronGeometry(1, 0);
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x6e6a62, roughness: 0.95, flatShading: true });
-  const rockCount = 60;
   const rockMesh = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
   rockMesh.castShadow = true; rockMesh.receiveShadow = true;
   const dummy = new THREE.Object3D();
@@ -96,7 +103,7 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
     const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
     const d = Math.sqrt(x * x + z * z) / radius;
     const falloff = Math.max(0, 1 - Math.pow(d, 2.1));
-    const n = fbm(x * 0.012, z * 0.012, 5);
+    const n = fbm(x * 0.012 + sx, z * 0.012 + sz, 5);
     const h = falloff * peak * (0.55 + 0.65 * n);
     if (h < 2) continue; // keep rocks off the beach/underwater
     const s = 1.2 + Math.random() * 3.2;
@@ -113,7 +120,6 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
   // low scrub vegetation (simple cone clusters) on grass zones
   const scrubGeo = new THREE.ConeGeometry(1, 2.2, 6);
   const scrubMat = new THREE.MeshStandardMaterial({ color: 0x3f6b34, roughness: 0.9, flatShading: true });
-  const scrubCount = 140;
   const scrubMesh = new THREE.InstancedMesh(scrubGeo, scrubMat, scrubCount);
   scrubMesh.castShadow = true;
   let sPlaced = 0, sAttempts = 0;
@@ -124,7 +130,7 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
     const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
     const d = Math.sqrt(x * x + z * z) / radius;
     const falloff = Math.max(0, 1 - Math.pow(d, 2.1));
-    const n = fbm(x * 0.012, z * 0.012, 5);
+    const n = fbm(x * 0.012 + sx, z * 0.012 + sz, 5);
     const h = falloff * peak * (0.55 + 0.65 * n);
     if (h < 3 || h > peak * 0.55) continue;
     const s = 0.7 + Math.random() * 1.1;
@@ -138,39 +144,43 @@ export function buildIsland({ radius = 260, peak = 58, segments = 128 } = {}) {
   scrubMesh.count = sPlaced;
   group.add(scrubMesh);
 
-  // lighthouse landmark near the highest point
-  const lhMat = new THREE.MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.6 });
-  const lhStripeMat = new THREE.MeshStandardMaterial({ color: 0xb5352f, roughness: 0.6 });
-  const lhGroup = new THREE.Group();
-  const towerH = 22;
-  const towerGeo = new THREE.CylinderGeometry(2.6, 3.6, towerH, 12);
-  const tower = new THREE.Mesh(towerGeo, lhMat);
-  tower.position.y = towerH / 2;
-  tower.castShadow = true;
-  lhGroup.add(tower);
-  for (let i = 0; i < 3; i++) {
-    const stripe = new THREE.Mesh(new THREE.CylinderGeometry(2.62 + i * 0.006, 2.9 + i * 0.5, towerH / 6, 12), lhStripeMat);
-    stripe.position.y = towerH * 0.18 + i * (towerH / 3.1);
-    lhGroup.add(stripe);
-  }
-  const lantern = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3, 10), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.3, metalness: 0.4 }));
-  lantern.position.y = towerH + 1.5;
-  lhGroup.add(lantern);
-  const lampGeo = new THREE.SphereGeometry(1.1, 10, 8);
-  const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff3c4, emissive: 0xffdd88, emissiveIntensity: 2.2, roughness: 0.3 });
-  const lamp = new THREE.Mesh(lampGeo, lampMat);
-  lamp.position.y = towerH + 1.5;
-  lhGroup.add(lamp);
-  const beaconLight = new THREE.PointLight(0xffdd88, 8, 400, 2);
-  beaconLight.position.y = towerH + 1.5;
-  lhGroup.add(beaconLight);
+  // lighthouse landmark near the highest point — a small islet can skip it (lighthouse
+  // = false) so it doesn't read as a shrunken clone of the main landfall island
+  let beaconLight = null, lamp = null;
+  if (lighthouse) {
+    const lhMat = new THREE.MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.6 });
+    const lhStripeMat = new THREE.MeshStandardMaterial({ color: 0xb5352f, roughness: 0.6 });
+    const lhGroup = new THREE.Group();
+    const towerH = 22;
+    const towerGeo = new THREE.CylinderGeometry(2.6, 3.6, towerH, 12);
+    const tower = new THREE.Mesh(towerGeo, lhMat);
+    tower.position.y = towerH / 2;
+    tower.castShadow = true;
+    lhGroup.add(tower);
+    for (let i = 0; i < 3; i++) {
+      const stripe = new THREE.Mesh(new THREE.CylinderGeometry(2.62 + i * 0.006, 2.9 + i * 0.5, towerH / 6, 12), lhStripeMat);
+      stripe.position.y = towerH * 0.18 + i * (towerH / 3.1);
+      lhGroup.add(stripe);
+    }
+    const lantern = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3, 10), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.3, metalness: 0.4 }));
+    lantern.position.y = towerH + 1.5;
+    lhGroup.add(lantern);
+    const lampGeo = new THREE.SphereGeometry(1.1, 10, 8);
+    const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff3c4, emissive: 0xffdd88, emissiveIntensity: 2.2, roughness: 0.3 });
+    lamp = new THREE.Mesh(lampGeo, lampMat);
+    lamp.position.y = towerH + 1.5;
+    lhGroup.add(lamp);
+    beaconLight = new THREE.PointLight(0xffdd88, 8, 400, 2);
+    beaconLight.position.y = towerH + 1.5;
+    lhGroup.add(beaconLight);
 
-  // place lighthouse near the peak, on solid ground
-  const lhX = radius * 0.12, lhZ = -radius * 0.08;
-  const lhFalloff = Math.max(0, 1 - Math.pow(Math.sqrt(lhX * lhX + lhZ * lhZ) / radius, 2.1));
-  const lhH = lhFalloff * peak * (0.55 + 0.65 * fbm(lhX * 0.012, lhZ * 0.012, 5));
-  lhGroup.position.set(lhX, lhH, lhZ);
-  group.add(lhGroup);
+    // place lighthouse near the peak, on solid ground
+    const lhX = radius * 0.12, lhZ = -radius * 0.08;
+    const lhFalloff = Math.max(0, 1 - Math.pow(Math.sqrt(lhX * lhX + lhZ * lhZ) / radius, 2.1));
+    const lhH = lhFalloff * peak * (0.55 + 0.65 * fbm(lhX * 0.012 + sx, lhZ * 0.012 + sz, 5));
+    lhGroup.position.set(lhX, lhH, lhZ);
+    group.add(lhGroup);
+  }
 
   return { group, radius, beaconLight, lamp };
 }

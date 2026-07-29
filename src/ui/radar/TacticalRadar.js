@@ -414,6 +414,16 @@ export class TacticalRadar {
   show() { if (this.root) this.root.classList.remove('tac-radar-hidden'); }
   hide() { if (this.root) this.root.classList.add('tac-radar-hidden'); }
 
+  /** Enlarge + center the panel when the player mans the Radar station. */
+  setStationFocus(focused) {
+    if (!this.root) return;
+    const size = focused ? 420 : 260;
+    this.options.size = size;
+    this.root.style.setProperty('--radar-size', `${size}px`);
+    this.root.classList.toggle('stn-radar-focus', !!focused);
+    this._resizeCanvas();
+  }
+
   dispose() {
     if (this._rafId) cancelAnimationFrame(this._rafId);
     window.removeEventListener('resize', this._onResize);

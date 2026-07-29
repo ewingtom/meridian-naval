@@ -14,15 +14,13 @@ export class WeaponsSystem {
     this.scene = scene;
     this.projectiles = [];
     this.explosions = [];
-    this.cb = callbacks; // { onFire, onExplosion, onHit(entity,dmg), onPlayerHit(dmg) }
+    this.cb = callbacks; // { onFire, onExplosion, onHit(entity,dmg), onShipHit(ship,dmg) }
 
     this.ammo = { missile: 16, torpedo: 8, drone: 2 };
     this.selectedWeapon = 'gun';
     this._cooldowns = { gun: 0, missile: 0, torpedo: 0, drone: 0 };
 
     this.ciwsRangeM = 900;
-    this.ciwsAmmo = 1500;
-    this._ciwsCooldown = 0;
 
     this.selectedTargetId = null;
   }
@@ -63,27 +61,32 @@ export class WeaponsSystem {
     this.cb.onExplosion?.(position, opts);
   }
 
-  update(dt, { playerShip, enemies, elapsed }) {
+  /** `ships`: every crewed ship in play (Meridian + task-force escorts) — hostile
+   * ordnance can hit any of them and each defends itself with its own CIWS mount,
+   * instead of everything but one hardcoded ship being invulnerable set-dressing. */
+  update(dt, { ships, enemies, elapsed }) {
     for (const k in this._cooldowns) this._cooldowns[k] = Math.max(0, this._cooldowns[k] - dt);
-    this._ciwsCooldown = Math.max(0, this._ciwsCooldown - dt);
 
-    // --- CIWS auto-defense: intercept incoming enemy ordnance targeting the player ---
-    const playerPos = playerShip.group.position;
-    if (this._ciwsCooldown <= 0 && this.ciwsAmmo > 0) {
+    // --- CIWS auto-defense: each ship intercepts incoming ordnance aimed near it ---
+    for (const ship of ships) {
+      if (!ship.alive) continue;
+      ship._ciwsCooldown = Math.max(0, ship._ciwsCooldown - dt);
+      if (ship._ciwsCooldown > 0 || ship.ciwsAmmo <= 0) continue;
+      const shipPos = ship.group.position;
       const threat = this.projectiles.find(
         (p) => !p.dead && ['enemyMissile', 'torpedo', 'airMissile'].includes(p.type) &&
-          p.position.distanceTo(playerPos) < this.ciwsRangeM
+          p.position.distanceTo(shipPos) < this.ciwsRangeM
       );
       if (threat && threat.type !== 'torpedo') {
-        this._ciwsCooldown = 0.12;
-        this.ciwsAmmo -= 1;
-        const from = playerPos.clone().add(new THREE.Vector3(0, 14, 0));
+        ship._ciwsCooldown = 0.12;
+        ship.ciwsAmmo -= 1;
+        const from = shipPos.clone().add(new THREE.Vector3(0, 14, 0));
         this.spawn('ciwsRound', from, threat.position.clone(), { targetEntity: threat });
         this.cb.onFire?.('ciws');
       }
     }
 
-    // --- update projectiles, collide vs entities / player ---
+    // --- update projectiles, collide vs entities / ships ---
     for (const p of this.projectiles) {
       if (p.dead) continue;
       p.update(dt);
@@ -103,12 +106,11 @@ export class WeaponsSystem {
         continue;
       }
 
-      const isPlayerWeapon = ['playerShell', 'playerMissile', 'playerTorpedo', 'ciwsRound'].includes(p.type);
-      if (isPlayerWeapon) {
+      const isFriendlyWeapon = ['playerShell', 'playerMissile', 'playerTorpedo', 'ciwsRound'].includes(p.type);
+      if (isFriendlyWeapon) {
         for (const e of enemies) {
           if (!e.alive || e.destroyed) continue;
           if (e.domain === 'SUBSURFACE' && p.type !== 'playerTorpedo') continue;
-          const hitPos = e.position.clone(); hitPos.y = p.position.y;
           if (p.position.distanceTo(e.position) < p.cfg.radius) {
             e.takeDamage(p.cfg.damage);
             this.cb.onHit?.(e, p.cfg.damage);
@@ -118,11 +120,16 @@ export class WeaponsSystem {
           }
         }
       } else {
-        // enemy ordnance vs player
-        if (p.position.distanceTo(playerPos) < p.cfg.radius) {
-          this.cb.onPlayerHit?.(p.cfg.damage);
-          this.explode(p.position.clone(), { scale: 1.2 });
-          p.dead = true;
+        // hostile ordnance vs whichever crewed ship it's actually closest to
+        for (const ship of ships) {
+          if (!ship.alive) continue;
+          if (p.position.distanceTo(ship.group.position) < p.cfg.radius) {
+            ship.takeDamage(p.cfg.damage);
+            this.cb.onShipHit?.(ship, p.cfg.damage);
+            this.explode(p.position.clone(), { scale: 1.2 });
+            p.dead = true;
+            break;
+          }
         }
       }
     }

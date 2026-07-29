@@ -12,6 +12,7 @@
 }
 .meridian-menu.menu-hidden {
   opacity: 0;
+  visibility: hidden;
 }
 /* A hidden (but still-mounted) menu must not swallow clicks meant for the game/HUD
    behind it. See styles.css `#ui-root * { pointer-events: auto }` for why
@@ -93,6 +94,14 @@
   justify-content: center;
   padding: 6vh 8vw;
   max-width: 620px;
+}
+/* MainMenu's nav has grown to 5 items — anchoring near the top (instead of vertical
+   centering) keeps the title from ever clipping against the top edge on short
+   viewports, regardless of how many nav rows get added later. PauseMenu/other
+   menu-content users are unaffected since this is scoped to .main-menu. */
+.main-menu .menu-content {
+  justify-content: flex-start;
+  padding-top: 8vh;
 }
 
 .menu-eyebrow {

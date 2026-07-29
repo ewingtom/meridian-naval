@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { EnemyShip } from '../entities/EnemyShip.js';
 import { Submarine } from '../entities/Submarine.js';
 import { Aircraft } from '../entities/Aircraft.js';
-import { FriendlyShip } from '../entities/FriendlyShip.js';
+import { MerchantShip } from '../entities/MerchantShip.js';
+import { buildEnemyShipMesh } from '../entities/geometryKits.js';
 
 export class WorldManager {
   constructor(scene, weapons) {
@@ -31,15 +32,33 @@ export class WorldManager {
     }
   }
 
-  /** Escorts holding station relative to the player so the ocean never feels empty. */
-  spawnTaskForce(aroundPos) {
-    const stations = [
-      { name: 'FS Sentinel (DDG)', offset: new THREE.Vector3(-420, 0, -60) },
-      { name: 'FS Vanguard (CG)', offset: new THREE.Vector3(360, 0, -180) },
-    ];
-    for (const s of stations) {
-      const worldPos = s.offset.clone().add(aroundPos);
-      this.entities.push(new FriendlyShip({ name: s.name, position: worldPos, stationOffset: s.offset, scene: this.scene }));
+  /** Neutral civilian traffic — a merchant/tanker transiting a long lane across the
+   * patrol area, visible on radar (amber "unknown" blip, since it's not a military
+   * IFF) and by eye, but unarmed and never engaging. Gives the ocean a sense of a
+   * living, working sea rather than only player + military units. */
+  spawnMerchantTraffic(aroundPos) {
+    const a = aroundPos.clone().add(new THREE.Vector3(-2800, 0, -1200));
+    const b = aroundPos.clone().add(new THREE.Vector3(2600, 0, 2400));
+    this.entities.push(new MerchantShip({ name: 'MV Kestrel Bay', position: a.clone(), waypoints: [a, b], scene: this.scene }));
+  }
+
+  /** Distant task-force silhouettes on the horizon — purely decorative dressing (not
+   * Entities: no radar contact, no physics/update cost) that sells the premise that
+   * MERIDIAN is one hull within a much larger task force, not sailing alone. Spawned
+   * once ever (guarded) since a "New Patrol" after a game-over restart would otherwise
+   * pile up duplicate copies on top of each other. */
+  spawnHorizonTaskForce(aroundPos) {
+    if (this._horizonSpawned) return;
+    this._horizonSpawned = true;
+    const center = aroundPos.clone().add(new THREE.Vector3(-6400, 0, 5400));
+    const offsets = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(340, 0, -220), new THREE.Vector3(-260, 0, 260)];
+    for (const off of offsets) {
+      const { group } = buildEnemyShipMesh();
+      group.position.copy(center).add(off);
+      group.rotation.y = Math.PI * 0.15;
+      // far enough out that shadows are wasted render cost for zero visible benefit
+      group.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+      this.scene.add(group);
     }
   }
 

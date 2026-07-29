@@ -1,0 +1,434 @@
+/* ==========================================================================
+   Station overlays — seated console UIs (helm / weapons / radar / lookout)
+   ========================================================================== */
+
+.station-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.45s var(--ease-hud);
+  z-index: 20;
+}
+.station-overlay.is-active {
+  opacity: 1;
+}
+.station-overlay > * {
+  pointer-events: none;
+}
+
+.stn-chrome {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 78% 62% at 50% 40%, transparent 55%, rgba(2, 6, 10, 0.28) 100%),
+    linear-gradient(to bottom, rgba(2, 8, 12, 0.18) 0%, transparent 14%, transparent 82%, rgba(2, 8, 12, 0.32) 100%);
+}
+
+.stn-topbar {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 22px;
+  min-width: 420px;
+  justify-content: center;
+}
+.stn-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--c-cyan);
+}
+.stn-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--c-text-dim);
+}
+.stn-hint kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 2px;
+  border: 1px solid var(--c-border);
+  color: var(--c-cyan);
+  background: var(--c-cyan-soft);
+  font: inherit;
+}
+
+/* ---- HELM ---- */
+.stn-helm-cluster {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: 160px 220px 160px;
+  gap: 14px;
+  align-items: end;
+}
+.stn-gauge {
+  padding: 12px 14px;
+  text-align: center;
+}
+.stn-gauge-value {
+  font-family: var(--font-display);
+  font-size: 34px;
+  letter-spacing: 0.04em;
+  color: var(--c-text);
+  line-height: 1;
+}
+.stn-gauge-unit {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--c-cyan);
+  margin-top: 4px;
+}
+.stn-telegraph {
+  padding: 14px 16px;
+}
+.stn-telegraph-track {
+  position: relative;
+  height: 10px;
+  margin: 14px 0 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--c-border);
+}
+.stn-telegraph-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  background: linear-gradient(90deg, var(--c-cyan-dim), var(--c-cyan));
+  box-shadow: 0 0 12px rgba(77, 232, 255, 0.45);
+  transition: width 0.12s linear, left 0.12s linear;
+}
+.stn-telegraph-fill.reverse {
+  background: linear-gradient(270deg, var(--c-amber-dim), var(--c-amber));
+  box-shadow: 0 0 12px rgba(255, 176, 46, 0.4);
+}
+.stn-telegraph-zero {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--c-text-faint);
+  transform: translateX(-50%);
+}
+.stn-rudder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--c-text-dim);
+}
+.stn-rudder-needle {
+  width: 72px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.stn-rudder-needle > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 8px;
+  margin-left: -4px;
+  background: var(--c-cyan);
+  transform: translateX(0);
+  transition: transform 0.1s linear;
+  box-shadow: 0 0 8px rgba(77, 232, 255, 0.5);
+}
+.stn-order {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--c-green);
+  text-align: center;
+  margin-top: 4px;
+}
+
+/* ---- WEAPONS ---- */
+.stn-weapons-rack {
+  position: absolute;
+  left: 22px;
+  bottom: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 250px;
+}
+.stn-weapon-slot {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-panel);
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.stn-weapon-slot.is-selected {
+  border-color: var(--c-amber);
+  background: var(--c-amber-soft);
+  box-shadow: 0 0 18px rgba(255, 176, 46, 0.18);
+}
+.stn-weapon-slot.is-empty {
+  opacity: 0.45;
+}
+.stn-weapon-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-amber);
+  border: 1px solid var(--c-amber-dim);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+}
+.stn-weapon-name {
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-text);
+}
+.stn-weapon-ammo {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-text-dim);
+}
+.stn-target-panel {
+  position: absolute;
+  right: 22px;
+  bottom: 28px;
+  width: 280px;
+  padding: 14px 16px;
+}
+.stn-target-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  color: var(--c-amber);
+  margin-bottom: 6px;
+}
+.stn-target-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-text-dim);
+}
+.stn-target-meta strong {
+  color: var(--c-text);
+  font-weight: 500;
+}
+.stn-fire-status {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c-border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: var(--c-green);
+}
+.stn-fire-status.is-reloading { color: var(--c-amber); }
+.stn-fire-status.is-empty { color: var(--c-red); }
+.stn-fire-status.is-notarget { color: var(--c-text-dim); }
+
+.stn-weapons-reticle {
+  position: absolute;
+  left: 50%;
+  top: 48%;
+  transform: translate(-50%, -50%);
+  width: 110px;
+  height: 110px;
+  opacity: 0.85;
+}
+.stn-weapons-reticle svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: var(--c-amber);
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 4px rgba(255, 176, 46, 0.45));
+}
+
+/* ---- RADAR ---- */
+.stn-radar-side {
+  position: absolute;
+  left: 22px;
+  top: 110px;
+  bottom: 28px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.stn-contact-list {
+  flex: 1;
+  overflow: hidden;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.stn-contact-list-body {
+  flex: 1;
+  overflow: hidden;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stn-contact-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-text-dim);
+  border-left: 2px solid transparent;
+}
+.stn-contact-row.is-selected {
+  background: var(--c-cyan-soft);
+  border-left-color: var(--c-cyan);
+  color: var(--c-text);
+}
+.stn-contact-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c-amber);
+  box-shadow: 0 0 6px currentColor;
+}
+.stn-contact-dot.hostile { background: var(--c-red); color: var(--c-red); }
+.stn-contact-dot.friendly { background: var(--c-green); color: var(--c-green); }
+.stn-contact-dot.unknown { background: var(--c-amber); color: var(--c-amber); }
+.stn-sonar-panel {
+  padding: 12px 14px;
+}
+.stn-sonar-pulse {
+  height: 4px;
+  margin-top: 10px;
+  background: rgba(77, 232, 255, 0.12);
+  overflow: hidden;
+  position: relative;
+}
+.stn-sonar-pulse > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(90deg, transparent, var(--c-cyan));
+  box-shadow: 0 0 10px rgba(77, 232, 255, 0.5);
+}
+.stn-sonar-pulse.is-active > i {
+  animation: stn-sonar-sweep 2.4s var(--ease-hud) forwards;
+}
+@keyframes stn-sonar-sweep {
+  from { width: 0%; opacity: 1; }
+  to { width: 100%; opacity: 0.15; }
+}
+
+/* enlarge tactical radar when manning the radar station */
+.tac-radar.stn-radar-focus {
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: calc(var(--radar-size, 420px) + 28px);
+  z-index: 25;
+  box-shadow: 0 0 40px rgba(77, 232, 255, 0.12);
+}
+
+/* ---- LOOKOUT ---- */
+.stn-lookout-frame {
+  position: absolute;
+  inset: 8% 18%;
+  border: 2px solid rgba(120, 210, 230, 0.25);
+  border-radius: 50% / 42%;
+  box-shadow:
+    inset 0 0 80px rgba(0, 0, 0, 0.55),
+    0 0 0 9999px rgba(2, 6, 10, 0.62);
+  pointer-events: none;
+}
+.stn-lookout-cross {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 140px;
+  height: 140px;
+  transform: translate(-50%, -50%);
+  opacity: 0.55;
+}
+.stn-lookout-cross::before,
+.stn-lookout-cross::after {
+  content: '';
+  position: absolute;
+  background: var(--c-cyan);
+}
+.stn-lookout-cross::before {
+  left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%);
+}
+.stn-lookout-cross::after {
+  top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%);
+}
+.stn-lookout-readout {
+  position: absolute;
+  bottom: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--c-cyan);
+  text-align: center;
+}
+
+/* walk proximity prompt polish */
+.stn-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: 14%;
+  transform: translateX(-50%) translateY(8px);
+  padding: 12px 20px;
+  background: rgba(6, 14, 18, 0.88);
+  border: 1px solid rgba(120, 210, 230, 0.45);
+  color: #d9eef4;
+  font: 13px/1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  border-radius: 2px;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s var(--ease-hud), transform 0.25s var(--ease-hud);
+}
+.stn-prompt.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.stn-prompt kbd {
+  display: inline-block;
+  padding: 1px 7px;
+  margin-right: 8px;
+  border: 1px solid var(--c-cyan);
+  color: var(--c-cyan);
+  background: var(--c-cyan-soft);
+}
