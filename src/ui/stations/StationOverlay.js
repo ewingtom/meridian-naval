@@ -187,6 +187,41 @@ export class StationOverlay {
         </div>
       </div>
 
+      <div class="stn-panel" data-panel="SONAR" hidden>
+        <div class="stn-radar-side">
+          <div class="stn-sonar-panel hud-panel">
+            <div class="hud-corners"></div>
+            <div class="hud-label">Active Sonar</div>
+            <div class="stn-hint" style="margin-top:6px"><kbd>Q</kbd> Ping · localize submerged contacts</div>
+            <div class="stn-sonar-pulse" data-snr="sonar"><i></i></div>
+            <div class="stn-nav-cue" data-snr="depth">No subsurface contact</div>
+          </div>
+          <div class="stn-contact-list hud-panel">
+            <div class="hud-corners"></div>
+            <div class="hud-label">Subsurface Contacts</div>
+            <div class="stn-contact-list-body" data-snr="list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stn-panel" data-panel="TAO" hidden>
+        <div class="stn-radar-side">
+          <div class="stn-radar-tools hud-panel">
+            <div class="hud-corners"></div>
+            <div class="hud-label">Task Force Net</div>
+            <div class="stn-tao-status" data-tao="status">WEAPONS HOLD · NO SHARED TRACK</div>
+            <div class="stn-hint" style="margin-top:6px">
+              <kbd>C</kbd> Share · <kbd>V</kbd> Free · <kbd>B</kbd> Hold · <kbd>N</kbd> Ping · <kbd>M</kbd> Screen · <kbd>Y</kbd> Wilco
+            </div>
+          </div>
+          <div class="stn-contact-list hud-panel">
+            <div class="hud-corners"></div>
+            <div class="hud-label">Tactical Overview — All Contacts</div>
+            <div class="stn-contact-list-body" data-tao="list"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="stn-panel" data-panel="LOOKOUT" hidden>
         <div class="stn-lookout-frame"></div>
         <div class="stn-lookout-cross"></div>
@@ -237,6 +272,7 @@ export class StationOverlay {
       solutionBox: this.root.querySelector('[data-wpn="solution-box"]'),
       inbound: this.root.querySelector('[data-wpn="inbound"]'),
       leadRing: this.root.querySelector('.stn-lead-ring'),
+      reticle: this.root.querySelector('.stn-weapons-reticle'),
     };
     this._rdr = {
       list: this.root.querySelector('[data-rdr="list"]'),
@@ -249,6 +285,15 @@ export class StationOverlay {
       readout: this.root.querySelector('[data-look="readout"]'),
       contact: this.root.querySelector('[data-look="contact"]'),
       meta: this.root.querySelector('[data-look="meta"]'),
+    };
+    this._snr = {
+      list: this.root.querySelector('[data-snr="list"]'),
+      sonar: this.root.querySelector('[data-snr="sonar"]'),
+      depth: this.root.querySelector('[data-snr="depth"]'),
+    };
+    this._tao = {
+      status: this.root.querySelector('[data-tao="status"]'),
+      list: this.root.querySelector('[data-tao="list"]'),
     };
 
     // Telegraph notches (clickable)
@@ -308,14 +353,18 @@ export class StationOverlay {
     if (this._station === 'HELM') this._updateHelm(state);
     else if (this._station === 'WEAPONS') this._updateWeapons(state);
     else if (this._station === 'RADAR') this._updateRadar(state);
+    else if (this._station === 'SONAR') this._updateSonar(state);
     else if (this._station === 'LOOKOUT') this._updateLookout(state);
+    else if (this._station === 'TAO') this._updateTao(state);
   }
 
   triggerSonarPulse() {
-    if (!this._rdr.sonar) return;
-    this._rdr.sonar.classList.remove('is-active');
-    void this._rdr.sonar.offsetWidth;
-    this._rdr.sonar.classList.add('is-active');
+    for (const el of [this._rdr.sonar, this._snr.sonar]) {
+      if (!el) continue;
+      el.classList.remove('is-active');
+      void el.offsetWidth;
+      el.classList.add('is-active');
+    }
   }
 
   _updateHelm(s) {
@@ -403,6 +452,15 @@ export class StationOverlay {
       this._wpn.leadRing.style.opacity = sol.ok ? '1' : '0.25';
       this._wpn.leadRing.style.stroke = sol.ok ? '#3dffa0' : '#ffb02e';
     }
+    // Reticle reads the SAME designation the radar operator (you, or an AI crewmate
+    // manning that console) shares to the force — a track called out at Radar shows
+    // up here in red the instant it's designated, without Weapons having to hunt for
+    // it themselves. Grey/hidden with nothing designated, red once a track exists,
+    // brighter/pulsing once the tactical camera has actually locked onto it (s.trackLock).
+    if (this._wpn.reticle) {
+      this._wpn.reticle.classList.toggle('has-target', !!target);
+      this._wpn.reticle.classList.toggle('is-locked', !!target && !!s.trackLock);
+    }
 
     const inbound = s.inbound || [];
     if (!inbound.length) {
@@ -471,6 +529,47 @@ export class StationOverlay {
     }
   }
 
+  _updateSonar(s) {
+    const subs = (s.allContacts || []).filter((c) => String(c.domain).toUpperCase() === 'SUBSURFACE');
+    const rows = subs.slice(0, 10).map((c) => `
+      <div class="stn-contact-row ${c.id === s.selectedTargetId ? 'is-selected' : ''}">
+        <span class="stn-contact-dot hostile"></span>
+        <span>${c.name || c.id} <em>SUB</em></span>
+        <span>${c.distanceM != null ? formatDistance(c.distanceM) : ''}</span>
+      </div>`);
+    this._snr.list.innerHTML = rows.length
+      ? rows.join('')
+      : `<div class="stn-contact-row"><span></span><span>NO SUBSURFACE CONTACTS</span><span></span></div>`;
+    if (this._snr.depth) {
+      this._snr.depth.textContent = subs.length
+        ? `Nearest sub ${formatDistance(subs[0].distanceM)} — ping to localize`
+        : 'No subsurface contact';
+    }
+  }
+
+  _updateTao(s) {
+    const st = s.taskForceStatus || {};
+    if (this._tao.status) {
+      const policy = st.weaponsPolicy === 'free' ? 'WEAPONS FREE' : 'WEAPONS HOLD';
+      const track = st.sharedName ? `SHARED · ${st.sharedName}` : 'NO SHARED TRACK';
+      this._tao.status.textContent = `${policy} · ${track}`;
+      this._tao.status.classList.toggle('is-free', st.weaponsPolicy === 'free');
+    }
+    const contacts = s.allContacts || [];
+    const rows = contacts.slice(0, 16).map((c) => {
+      const iff = (c.iff || 'unknown').toLowerCase();
+      const dom = (c.domain || '').toString().slice(0, 4).toUpperCase();
+      return `<div class="stn-contact-row ${c.id === s.selectedTargetId ? 'is-selected' : ''} ${c.isWaypoint ? 'is-nav' : ''}">
+        <span class="stn-contact-dot ${iff}"></span>
+        <span>${c.name || c.id} <em>${dom}</em></span>
+        <span>${c.distanceM != null ? formatDistance(c.distanceM) : ''}</span>
+      </div>`;
+    });
+    this._tao.list.innerHTML = rows.length
+      ? rows.join('')
+      : `<div class="stn-contact-row"><span></span><span>PICTURE CLEAR</span><span></span></div>`;
+  }
+
   _updateLookout(s) {
     const zoom = s.lookoutZoom ?? 1;
     const lookBrg = s.lookBearing != null ? formatBearing(s.lookBearing) : '---';
@@ -507,12 +606,20 @@ const STATION_UI = {
     hint: '<kbd>1</kbd>–<kbd>4</kbd> Weapon · <kbd>Tab</kbd> Track · <kbd>T</kbd> Lock · Fire · <kbd>E</kbd> Stand',
   },
   RADAR: {
-    title: 'Radar / Sonar CIC',
-    hint: '<kbd>Q</kbd> Sonar · <kbd>[</kbd>/<kbd>]</kbd> Range · Filter · <kbd>Enter</kbd> Designate · <kbd>E</kbd> Stand',
+    title: 'Radar CIC',
+    hint: '<kbd>[</kbd>/<kbd>]</kbd> Range · Filter · <kbd>Enter</kbd> Designate · <kbd>E</kbd> Stand',
+  },
+  SONAR: {
+    title: 'Sonar / ASW',
+    hint: '<kbd>Q</kbd> Active Ping · localize & prosecute subsurface · <kbd>E</kbd> Stand',
   },
   LOOKOUT: {
     title: 'Bridge Wing Lookout',
     hint: 'Mouse Scan · Scroll Zoom · <kbd>R</kbd> Report Contact · <kbd>E</kbd> Stand',
+  },
+  TAO: {
+    title: 'TAO / CIC',
+    hint: '<kbd>C</kbd> Share · <kbd>V</kbd> Free · <kbd>B</kbd> Hold · <kbd>N</kbd> Ping · <kbd>M</kbd> Screen · <kbd>Y</kbd> Wilco · <kbd>E</kbd> Stand',
   },
 };
 

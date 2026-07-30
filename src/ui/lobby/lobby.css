@@ -61,7 +61,7 @@
 
 .lobby-grid {
   display: grid;
-  grid-template-columns: 130px repeat(4, 1fr);
+  grid-template-columns: 110px repeat(6, 1fr);
   gap: 6px;
   margin-bottom: 18px;
 }

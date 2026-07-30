@@ -33,10 +33,10 @@ vec3 gerstner(vec3 p, float t, out vec3 tangent, out vec3 binormal) {
     float k = 6.28318530718 / wavelength;
     float c = sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
     float f = k * (dot(dir, p.xz) - c * t * 3.0);
-    float a = steepness / k / float(NUM_WAVES) * 2.85;
+    float a = steepness / k / float(NUM_WAVES) * 3.35;
     offset.x += dir.x * a * cos(f);
     offset.z += dir.y * a * cos(f);
-    offset.y += a * sin(f) * 0.82;
+    offset.y += a * sin(f) * 0.92;
 
     float wa = k * a;
     tangent += vec3(
@@ -129,6 +129,9 @@ float fbm(vec2 p) {
 }
 
 uniform float uDetailLevel; // 0 = cheap distant water, 1 = near-field micro detail
+uniform vec3 uShipPos;
+uniform float uShipSpeed; // knots
+uniform vec2 uShipFwd;    // XZ forward unit
 
 void main() {
   vec3 viewDir = normalize(uCamPos - vWorldPos);
@@ -158,7 +161,7 @@ void main() {
   vec3 reflectDir = reflect(-viewDir, N);
   vec3 reflColor = textureCube(uEnvMap, reflectDir).rgb;
   // Boost sky reflection so distant water reads like glass, not matte paint
-  reflColor *= 1.15;
+  reflColor *= 1.18;
 
   float depthMix = clamp(dot(N, vec3(0.0,1.0,0.0)), 0.0, 1.0);
   vec3 waterColor = mix(uDeepColor, uShallowColor, pow(depthMix, 2.4) * 0.55);
@@ -180,6 +183,24 @@ void main() {
   } else {
     foamMask *= smoothstep(0.04, 0.5, vFoamFactor);
   }
+
+  // Hull-proximal foam: bow spray wedge + stern churn so chase cam ties wake to water
+  vec2 toShip = vWorldPos.xz - uShipPos.xz;
+  float shipDist = length(toShip);
+  float spd = clamp(uShipSpeed / 24.0, 0.0, 1.2);
+  if (spd > 0.08 && shipDist < 220.0) {
+    vec2 fwd = normalize(uShipFwd);
+    float along = dot(toShip, fwd);
+    float side = abs(dot(toShip, vec2(-fwd.y, fwd.x)));
+    // Bow spray ahead of the ship
+    float bow = smoothstep(55.0, 8.0, along) * smoothstep(28.0, 4.0, side) * smoothstep(0.0, 18.0, along);
+    // Stern churn behind
+    float stern = smoothstep(-8.0, -90.0, along) * smoothstep(38.0, 6.0, side) * (1.0 - smoothstep(-160.0, -220.0, along));
+    // Beam wash
+    float beam = smoothstep(18.0, 0.0, abs(along)) * smoothstep(22.0, 8.0, side);
+    foamMask = max(foamMask, (bow * 0.95 + stern * 0.75 + beam * 0.35) * spd);
+  }
+
   vec3 foamColor = vec3(0.94, 0.97, 1.0);
 
   // Distant water deepens + desaturates (beer-lambert-ish) so the near field pops
@@ -235,11 +256,14 @@ export class OceanField {
       uSunDirection: { value: sunDirection.clone() },
       uSunColor: { value: new THREE.Color(0xfff0d8) },
       uEnvMap: { value: null },
-      uDeepColor: { value: new THREE.Color(0x021526) },
-      uShallowColor: { value: new THREE.Color(0x0e6a72) },
+      uDeepColor: { value: new THREE.Color(0x01121f) },
+      uShallowColor: { value: new THREE.Color(0x12808a) },
       uFogColor: { value: new THREE.Color(0xb0c9d8) },
-      uFogDensity: { value: 0.00068 },
-      uDetailLevel: { value: 0.75 },
+      uFogDensity: { value: 0.00062 },
+      uDetailLevel: { value: 0.85 },
+      uShipPos: { value: new THREE.Vector3() },
+      uShipSpeed: { value: 0 },
+      uShipFwd: { value: new THREE.Vector2(0, 1) },
     };
 
     this.material = new THREE.ShaderMaterial({
@@ -251,7 +275,7 @@ export class OceanField {
     });
 
     this.mesh = new THREE.Mesh(geo, this.material);
-    this.mesh.receiveShadow = false;
+    this.mesh.receiveShadow = true;
     this.mesh.frustumCulled = false;
 
     // Far skirt: high radial density so the horizon doesn't stair-step against the sky.
@@ -285,8 +309,18 @@ export class OceanField {
   }
 
   setQuality(q) {
-    const levels = { low: 0.2, medium: 0.7, high: 0.92, ultra: 1.0 };
-    this.uniforms.uDetailLevel.value = levels[q] ?? 0.7;
+    const levels = { low: 0.2, medium: 0.75, high: 0.95, ultra: 1.0 };
+    this.uniforms.uDetailLevel.value = levels[q] ?? 0.75;
+  }
+
+  /** Drive hull-proximal foam from the local ship each frame. */
+  setShipState(ship) {
+    if (!ship?.group) return;
+    const p = ship.group.position;
+    this.uniforms.uShipPos.value.set(p.x, p.y, p.z);
+    this.uniforms.uShipSpeed.value = Math.abs(ship.physics?.speedKnots || 0);
+    const h = ship.physics?.heading ?? 0;
+    this.uniforms.uShipFwd.value.set(Math.sin(h), Math.cos(h));
   }
 
   update(dt, elapsed, camera) {
@@ -306,8 +340,8 @@ export class OceanField {
       const k = (2 * Math.PI) / wavelength;
       const c = Math.sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
       const f = k * (dx * x + dz * z - c * t * 3.0);
-      const a = (steepness / k / WAVE_SET.length) * 2.85;
-      y += a * Math.sin(f) * 0.82;
+      const a = (steepness / k / WAVE_SET.length) * 3.35;
+      y += a * Math.sin(f) * 0.92;
     }
     return y;
   }

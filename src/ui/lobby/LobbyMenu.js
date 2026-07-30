@@ -22,7 +22,7 @@ import './lobby.css';
 import { el } from '../lib/utils.js';
 import { SHIP_IDS, SHIP_NAMES, STATION_IDS } from '../../net/protocol.js';
 
-const STATION_LABELS = { HELM: 'Helm', WEAPONS: 'Weapons', RADAR: 'Radar/Sonar', LOOKOUT: 'Lookout' };
+const STATION_LABELS = { HELM: 'Helm', WEAPONS: 'Weapons', RADAR: 'Radar', SONAR: 'Sonar/ASW', LOOKOUT: 'Lookout', TAO: 'TAO/CIC' };
 
 export class LobbyMenu {
   constructor(options = {}) {

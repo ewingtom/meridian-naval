@@ -44,10 +44,10 @@ export class ShipWake {
         return THREE.MathUtils.lerp(beam * 0.55, beam * 3.2, spread) * (0.55 + 0.45 * speedFactor);
       },
       alphaFn: (age, life, u, speedKn) => {
-        const fadeIn = THREE.MathUtils.clamp(age / 0.8, 0, 1);
+        const fadeIn = THREE.MathUtils.clamp(age / 0.5, 0, 1);
         const fadeOut = 1 - THREE.MathUtils.clamp(age / life, 0, 1);
-        const speedFactor = THREE.MathUtils.clamp((speedKn ?? 10) / 22, 0.15, 1);
-        return fadeIn * fadeOut * speedFactor * 0.95;
+        const speedFactor = THREE.MathUtils.clamp((speedKn ?? 10) / 16, 0.25, 1.15);
+        return fadeIn * fadeOut * speedFactor * 1.15;
       },
     });
 

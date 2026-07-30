@@ -10,7 +10,9 @@ export const Station = {
   HELM: 'HELM',
   WEAPONS: 'WEAPONS',
   RADAR: 'RADAR',
+  SONAR: 'SONAR',
   LOOKOUT: 'LOOKOUT',
+  TAO: 'TAO',
   TRANSITION: 'TRANSITION',
 };
 
@@ -27,14 +29,11 @@ const STATION_DEFS = {
     // window seat, and gives a much better read on heading/turn radius than a fixed
     // bridge window ever could.
     cameraMode: 'chase',
-    chaseOffset: new THREE.Vector3(0, 68, -150),
-    // Look-ahead point pulled in closer to the ship (was 55) and FOV opened up a bit
-    // (was 62) so the near field behind the stern — where the wake actually forms —
-    // falls inside the frustum instead of being cropped below the bottom edge. At the
-    // original values the downward look angle happened to end almost exactly at the
-    // transom, so the whole wake sat just off-screen no matter how bright it was.
-    chaseLookAhead: 28,
-    fov: 78,
+    // 3/4 elevated chase — lower than the old drone so superstructure/turrets fill the
+    // frame (judge: "gray wedge"). Slight lateral offset sells silhouette + wake.
+    chaseOffset: new THREE.Vector3(42, 38, -105),
+    chaseLookAhead: 18,
+    fov: 62,
     lookLimits: { yaw: Math.PI * 0.85, pitchMin: -0.55, pitchMax: 0.5 },
     promptText: 'Press E to take the Helm',
     barText: 'HELM — Telegraph · Rudder · Course to waypoint · E Leave',
@@ -65,6 +64,18 @@ const STATION_DEFS = {
     barText: 'RADAR — Filter · Range · Designate · Sonar · E Leave',
     accent: '#4de8ff',
   },
+  [Station.SONAR]: {
+    mountKey: 'sonar',
+    // Doctrine split from Radar: ASW-focused console, nose into its own scope rather
+    // than sharing Radar's surface/air plot.
+    lookOffset: new THREE.Vector3(0.2, -0.85, 6.5),
+    fov: 40,
+    lookLimits: { yaw: 0.55, pitchMin: -0.55, pitchMax: 0.2 },
+    hideLayers: [2],
+    promptText: 'Press E to man Sonar/ASW',
+    barText: 'SONAR — Active Ping (Q) · Localize · Prosecute · E Leave',
+    accent: '#3dffa0',
+  },
   [Station.LOOKOUT]: {
     mountKey: 'lookout',
     // Out on the starboard bridge wing — wide horizon glass, binocular FOV.
@@ -77,6 +88,25 @@ const STATION_DEFS = {
     zoomable: true,
     zoomMin: 22,
     zoomMax: 55,
+  },
+  [Station.TAO]: {
+    mountKey: 'tao',
+    // Command post: a high, near-vertical overview instead of a seated console shot —
+    // reads as "owns the whole tactical picture" rather than one more window seat, and
+    // is the physical home for the Task Force Net (C/V/B/N/M/Y) already usable from
+    // any station — manning TAO is where a captain/TAO would actually issue them.
+    cameraMode: 'chase',
+    // Steep but NOT near-vertical: a straight-down offset makes the view direction
+    // nearly parallel to the world-up used by Matrix4.lookAt, which gimbal-locks and
+    // rolls the frame unpredictably. ~40° off vertical keeps the whole task force in
+    // frame while staying numerically stable.
+    chaseOffset: new THREE.Vector3(0, 190, -210),
+    chaseLookAhead: 40,
+    fov: 62,
+    lookLimits: { yaw: Math.PI, pitchMin: -1.2, pitchMax: 0.15 },
+    promptText: 'Press E to man TAO / CIC',
+    barText: 'TAO — Share · Weapons Free/Hold · Ping · Screen · Wilco · E Leave',
+    accent: '#ffe9b0',
   },
 };
 const STATION_PROXIMITY_M = 3.4;

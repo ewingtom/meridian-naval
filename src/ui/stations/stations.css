@@ -409,6 +409,16 @@
   padding: 12px 14px;
   pointer-events: auto;
 }
+.stn-tao-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--c-amber);
+  margin-top: 4px;
+}
+.stn-tao-status.is-free {
+  color: var(--c-green);
+}
 .stn-filter-row, .stn-range-row {
   display: flex;
   gap: 6px;
@@ -488,6 +498,24 @@
   stroke: var(--c-amber);
   stroke-width: 1.4;
   filter: drop-shadow(0 0 4px rgba(255, 176, 46, 0.45));
+  transition: stroke 0.2s, filter 0.2s;
+}
+/* A track designated at Radar (by you or an AI crewmate) turns the Weapons reticle
+   red the instant it's shared — the whole point being Weapons doesn't have to hunt
+   for what Radar already called out. Locked (tactical camera actually on the
+   contact) adds a slow pulse so it reads as "live," not just "selected." */
+.stn-weapons-reticle.has-target svg {
+  stroke: var(--c-red);
+  filter: drop-shadow(0 0 5px rgba(255, 68, 68, 0.55));
+}
+.stn-weapons-reticle.is-locked svg {
+  stroke: var(--c-red);
+  filter: drop-shadow(0 0 8px rgba(255, 68, 68, 0.85));
+  animation: stn-reticle-pulse 1.1s ease-in-out infinite;
+}
+@keyframes stn-reticle-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 /* ---- RADAR ---- */

@@ -31,6 +31,7 @@ const sky = new SkySystem(renderer, scene);
 const ocean = new OceanField(renderer, sky.sunDirection);
 scene.add(ocean.group);
 ocean.setEnvMap(sky.envRT.texture);
+sky.onEnvMapUpdated = (tex) => ocean.setEnvMap(tex);
 pipeline.bindSunLight(sky.sunLight);
 
 const fogColor = new THREE.Color(0x9dc3dc);
@@ -120,7 +121,36 @@ const weapons = new WeaponsSystem(scene, {
     damageVignette.flashHit(Math.min(1, dmg / 40));
     if (localShip.health <= 0) handleGameOver();
   },
+  // Electronic Warfare doctrine hook: the instant a missile comes within chaff range
+  // of a ship, this fires once for that threat. Escorts auto-chaff themselves after a
+  // realistic reaction delay (their own EW tech, not the player); the local human's
+  // OWN ship gets no auto-assist here — deliberately, so "hold X for fire, Z for
+  // chaff" both require the player to actually do something under pressure instead of
+  // the game quietly bailing them out.
+  onEwWarning: (ship, threat) => {
+    const call = shipCallsign(ship);
+    if (ship === localShip) {
+      ewWarningUntil = performance.now() / 1000 + 6;
+      commsLog.push({ speaker: `${call} EW`, text: 'Missile lock — inbound, chaff range. Hold Z to spoof it.', urgency: 'critical' });
+      audio.playAlarmKlaxon?.();
+    } else {
+      setTimeout(() => {
+        if (!threat.dead) weapons.deployChaff(ship);
+      }, 700 + Math.random() * 600);
+    }
+  },
+  onChaff: (ship, spoofed) => {
+    const call = shipCallsign(ship);
+    audio.playUiConfirm?.();
+    commsLog.push({
+      speaker: `${call} EW`,
+      text: spoofed ? 'Chaff away — missile spoofed, breaking track.' : 'Chaff away — no joy, missile still tracking.',
+      urgency: spoofed ? 'normal' : 'warning',
+    });
+    if (ship === localShip && spoofed) ewWarningUntil = 0;
+  },
 });
+let ewWarningUntil = 0;
 const radar = new RadarSystem({ rangeM: 6000, sonarPingRangeM: 2400 });
 const world = new WorldManager(scene, weapons);
 const mission = new MissionSystem({
@@ -264,6 +294,63 @@ const coopPanel = new CoopPanel({
   },
 });
 coopPanel.mount(uiRoot);
+
+// ---- AI coordination fallback: TaskForceCoop's orders (share/engage/hold/ping/
+// screen/affirm) are issued via keybinds that work "from any seat" — which is exactly
+// the bug a player at Helm hit: DynamicOps kept nagging them to "share the track,"
+// but sharing a track is Radar/Sonar's job, not the helmsman's, and there was nobody
+// actually covering that job when the player wasn't personally sitting there. Each
+// coop requirement now has an owning station; if the player isn't manning it, an AI
+// crewmate fulfills the order after a realistic delay instead of the game just
+// waiting on a station nobody's even at. Matches the pattern already established for
+// Damage Control / EW: the player's own current post is theirs to handle, everything
+// else runs itself. */
+const COOP_OWNER_STATIONS = {
+  share: ['RADAR', 'SONAR'],
+  ping: ['SONAR', 'RADAR'],
+  engage: ['TAO'],
+  hold: ['TAO'],
+  screen: ['TAO'],
+  affirm: ['TAO'],
+};
+let aiCoopFulfillAt = 0;
+function aiEnsureTargetDesignated() {
+  const cur = weapons.selectedTargetId;
+  const valid = cur && !String(cur).startsWith('nav:') && !String(cur).startsWith('inbound:')
+    && world.entities.some((e) => e.id === cur && e.alive);
+  if (valid) return true;
+  let nearest = null, nearestD = Infinity;
+  for (const h of world.hostiles) {
+    const d = h.position.distanceTo(ships.player.group.position);
+    if (d < nearestD) { nearestD = d; nearest = h; }
+  }
+  if (!nearest) return false;
+  weapons.selectedTargetId = nearest.id;
+  return true;
+}
+function updateAiCoordination() {
+  const hint = taskForce.pendingHint;
+  if (!hint) { aiCoopFulfillAt = 0; return; }
+  const owners = COOP_OWNER_STATIONS[hint.kind];
+  if (!owners || owners.includes(playerController.state)) {
+    // It's the seat the player is actually in right now — theirs to handle, don't
+    // undercut them by having the AI grab it out from under them.
+    aiCoopFulfillAt = 0;
+    return;
+  }
+  const now = performance.now() / 1000;
+  if (!aiCoopFulfillAt) { aiCoopFulfillAt = now + 3 + Math.random() * 2.5; return; }
+  if (now < aiCoopFulfillAt) return;
+  aiCoopFulfillAt = 0;
+  if (hint.kind === 'share' || hint.kind === 'engage') aiEnsureTargetDesignated();
+  if (hint.kind === 'share') taskForce.shareTrack();
+  else if (hint.kind === 'engage') taskForce.engageShared();
+  else if (hint.kind === 'hold') taskForce.weaponsHold();
+  else if (hint.kind === 'ping') {
+    if (taskForce.requestEscortPing()) { stationOverlay.triggerSonarPulse(); audio.playSonarPing(); }
+  } else if (hint.kind === 'screen') taskForce.returnToScreen();
+  else if (hint.kind === 'affirm') taskForce.affirm();
+}
 
 const dynamicOps = new DynamicOps({
   world,
@@ -515,6 +602,42 @@ const promptEl = document.createElement('div');
 promptEl.className = 'stn-prompt';
 document.body.appendChild(promptEl);
 
+// ---- Damage Control alert: a hit that starts a fire (see CrewedShip.takeDamage)
+// needs the player to actually do something about it — hold X to fight it, from
+// wherever they're standing, station or not — instead of just watching the hull bar
+// drain. AI runs a slow passive baseline on every ship whether or not this is up. ----
+const fireAlertEl = document.createElement('div');
+fireAlertEl.className = 'hud-panel';
+fireAlertEl.style.cssText = `
+  position:fixed; left:50%; bottom:22%; transform:translateX(-50%);
+  padding:14px 26px; z-index:65; display:none; text-align:center;
+  border-color:rgba(255,68,68,0.6);
+`;
+fireAlertEl.innerHTML = `
+  <div class="hud-corners"></div>
+  <div class="hud-label" style="color:var(--c-red); font-size:14px;">DAMAGE CONTROL — FIRE ABOARD</div>
+  <div style="font:12px var(--font-mono); color:var(--c-text); margin-top:4px;">Hold <kbd>X</kbd> to fight it</div>
+`;
+document.body.appendChild(fireAlertEl);
+let localShipWasBurning = false;
+
+// ---- EW alert: mirrors the DC alert but for an inbound missile lock (see the
+// WeaponsSystem onEwWarning/onChaff callbacks above) — a timed window rather than a
+// continuous state, since a missile is seconds away, not an ongoing casualty. ----
+const ewAlertEl = document.createElement('div');
+ewAlertEl.className = 'hud-panel';
+ewAlertEl.style.cssText = `
+  position:fixed; left:50%; bottom:29%; transform:translateX(-50%);
+  padding:14px 26px; z-index:65; display:none; text-align:center;
+  border-color:rgba(255,176,46,0.6);
+`;
+ewAlertEl.innerHTML = `
+  <div class="hud-corners"></div>
+  <div class="hud-label" style="color:var(--c-amber); font-size:14px;">EW — MISSILE LOCK</div>
+  <div style="font:12px var(--font-mono); color:var(--c-text); margin-top:4px;">Press <kbd>Z</kbd> to deploy chaff</div>
+`;
+document.body.appendChild(ewAlertEl);
+
 // ---- controls intro: shown once per new patrol, on the deck before the mouse is
 // captured, so the player can read it without having to fight pointer lock. Only
 // covers the universal walk-around controls — station-specific ones (throttle/rudder,
@@ -618,7 +741,7 @@ const playerController = new PlayerController({
     const seated = station && station !== 'WALK' && STATION_DEFS[station];
     stationOverlay.setStation(seated ? station : null);
     hud.setAiming(station === Station.WEAPONS);
-    tacRadar.setStationFocus(station === Station.RADAR);
+    tacRadar.setStationFocus(station === Station.RADAR || station === Station.SONAR || station === Station.TAO);
     if (station !== Station.HELM) headingHold = false;
     if (station !== Station.WEAPONS) {
       playerController.weaponsTrackLock = false;
@@ -655,6 +778,7 @@ window.addEventListener('keydown', (e) => {
     }
   } else if (e.code === 'KeyM') { taskForce.returnToScreen(); audio.playUiConfirm(); }
   else if (e.code === 'KeyY') { taskForce.affirm(); audio.playUiConfirm(); }
+  else if (e.code === 'KeyZ') { weapons.deployChaff(localShip); }
 });
 
 // ---- station-specific inputs: each console owns a distinct control set ----
@@ -745,7 +869,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (st !== Station.WEAPONS && st !== Station.RADAR) return;
+  if (st !== Station.WEAPONS && st !== Station.RADAR && st !== Station.SONAR) return;
   if (e.code === 'KeyQ') {
     radar.triggerSonarPing(localShip.group.position.clone());
     audio.playSonarPing();
@@ -1051,6 +1175,14 @@ function animate() {
       // replicated ships visually frozen at their spawn position forever, even
       // though the network state was arriving and being stored correctly.
       ship.update(dt, elapsed, getWaveHeight);
+      if (!ship.networked) {
+        // Damage Control doctrine hook: only the LOCAL human's actively-held key
+        // speeds up suppression, and only for whichever ship they're actually
+        // standing on — every ship still gets the slow passive AI baseline so a
+        // fire on an escort nobody's aboard doesn't just burn forever unchecked.
+        const fighting = ship === localShip && gameStarted && playerController.keys.has('KeyX');
+        ship.updateDamageControl(dt, { fighting });
+      }
     }
     mp.tick(dt);
 
@@ -1065,7 +1197,9 @@ function animate() {
     shakeMag *= 0.88;
   } else shakeMag = 0;
 
+  sky.setFollowTarget(localShip.group.position);
   sky.update(camera, elapsed);
+  ocean.setShipState(localShip);
   ocean.update(dt, elapsed, camera);
 
   // lighthouse beacon pulse
@@ -1077,6 +1211,7 @@ function animate() {
     radar.update(dt);
     if (gameStarted) {
       dynamicOps.update(dt);
+      updateAiCoordination();
       coopPanel.update(taskForce.status);
     }
     world.update(dt, {
@@ -1123,6 +1258,17 @@ function animate() {
       selectedWeapon: { name: w.name, ammo: w.ammo === Infinity ? 999 : w.ammo, maxAmmo: w.maxAmmo === Infinity ? 999 : w.maxAmmo, ready: w.ready },
     });
     damageVignette.setHullPct((localShip.health / localShip.maxHealth) * 100);
+
+    const burning = localShip.fireIntensity > 0.02;
+    fireAlertEl.style.display = burning ? 'block' : 'none';
+    if (burning && !localShipWasBurning) {
+      commsLog.push({ speaker: 'DC CENTRAL', text: `Fire aboard ${localShip.name} — all hands, hold X to fight it.`, urgency: 'critical' });
+      audio.playAlarmKlaxon?.();
+    } else if (!burning && localShipWasBurning) {
+      commsLog.push({ speaker: 'DC CENTRAL', text: 'Fire out. Good work — resuming normal operations.', urgency: 'normal' });
+    }
+    localShipWasBurning = burning;
+    ewAlertEl.style.display = performance.now() / 1000 < ewWarningUntil ? 'block' : 'none';
 
     // Escorts show up on radar/tactical plot as friendly contacts alongside hostiles —
     // exclude whichever ship the local human is actually standing on (no need for a
@@ -1229,6 +1375,16 @@ function animate() {
           distanceM: Math.hypot(c.x, c.z),
           isWaypoint: !!c.isWaypoint,
         })),
+        // Unfiltered — Sonar (subsurface only) and TAO (everything) each need a view
+        // independent of whatever filter Radar's own operator happens to have set.
+        allContacts: lastContacts.map((c) => ({
+          id: c.id,
+          name: c.name,
+          iff: c.iff,
+          domain: c.domain,
+          distanceM: Math.hypot(c.x, c.z),
+          isWaypoint: !!c.isWaypoint,
+        })),
         selectedTargetId: weapons.selectedTargetId,
         filter: radarFilter,
         rangeM: radar.rangeM,
@@ -1236,6 +1392,7 @@ function animate() {
         lookoutZoom: playerController.lookoutZoom,
         lookBearing: playerController.getLookBearingDeg(),
         sighted,
+        taskForceStatus: taskForce.status,
       });
     }
   }

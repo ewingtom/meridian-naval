@@ -21,8 +21,37 @@ export class WeaponsSystem {
     this._cooldowns = { gun: 0, missile: 0, torpedo: 0, drone: 0 };
 
     this.ciwsRangeM = 900;
+    // EW soft-kill range is well outside CIWS's hard-kill range — a missile gets an
+    // early EW pass (chaff/decoy, cheaper, doesn't require the threat to be nearly on
+    // top of you) before it ever reaches CIWS range for a last-ditch shoot-down.
+    this.chaffRangeM = 3000;
 
     this.selectedTargetId = null;
+  }
+
+  /** Soft-kill defense: spoof the nearest inbound missile threatening `ship` with
+   * chaff/decoys. Distinct mechanic from CIWS (which shoots the missile down at much
+   * closer range) — this just needs the missile to believe the decoy is the real
+   * target, so no ammo is "fired" at the missile's actual position. Returns true if a
+   * threat was found and chaff was expended (independent of whether the spoof rolls
+   * successful — trying and missing is still a valid, informative outcome). */
+  deployChaff(ship) {
+    if (!ship?.alive || ship.chaffAmmo <= 0 || ship._chaffCooldown > 0) return false;
+    const shipPos = ship.group.position;
+    const threat = this.projectiles.find(
+      (p) => !p.dead && ['enemyMissile', 'airMissile'].includes(p.type) &&
+        p.position.distanceTo(shipPos) < this.chaffRangeM
+    );
+    if (!threat) return false;
+    ship.chaffAmmo -= 1;
+    ship._chaffCooldown = 4;
+    const spoofed = Math.random() < 0.65;
+    if (spoofed) {
+      threat.dead = true;
+      this.explode(threat.position.clone(), { scale: 0.35, decoy: true });
+    }
+    this.cb.onChaff?.(ship, spoofed);
+    return true;
   }
 
   selectWeapon(key) {
@@ -83,6 +112,23 @@ export class WeaponsSystem {
         const from = shipPos.clone().add(new THREE.Vector3(0, 14, 0));
         this.spawn('ciwsRound', from, threat.position.clone(), { targetEntity: threat });
         this.cb.onFire?.('ciws');
+      }
+    }
+
+    // --- EW early warning: fires once per missile per ship the instant it comes
+    // within chaff range, well before CIWS would ever see it, so there's a real
+    // window to react with deployChaff() instead of it just being CIWS's job alone ---
+    for (const ship of ships) {
+      if (!ship.alive) continue;
+      ship._chaffCooldown = Math.max(0, ship._chaffCooldown - dt);
+      const shipPos = ship.group.position;
+      for (const p of this.projectiles) {
+        if (p.dead || !['enemyMissile', 'airMissile'].includes(p.type)) continue;
+        if (ship._ewWarned.has(p.id)) continue;
+        if (p.position.distanceTo(shipPos) < this.chaffRangeM) {
+          ship._ewWarned.add(p.id);
+          this.cb.onEwWarning?.(ship, p);
+        }
       }
     }
 

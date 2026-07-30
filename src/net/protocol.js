@@ -39,7 +39,7 @@ export const SHIP_NAMES = {
   escort2: 'FS Vanguard (CG)',
 };
 
-export const STATION_IDS = ['HELM', 'WEAPONS', 'RADAR', 'LOOKOUT'];
+export const STATION_IDS = ['HELM', 'WEAPONS', 'RADAR', 'SONAR', 'LOOKOUT', 'TAO'];
 
 export function makeRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no O/0/I/1 ambiguity

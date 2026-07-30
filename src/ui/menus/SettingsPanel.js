@@ -40,7 +40,7 @@ const DEFAULTS = {
   musicVolume: 70,
   sfxVolume: 85,
   mouseSensitivity: 50,
-  graphicsQuality: 'medium',
+  graphicsQuality: 'high',
   invertY: false,
 };
 

@@ -62,11 +62,25 @@ export function buildBridgeInterior({ lite = false } = {}) {
     map: cloneTex(floorTexSet.map, 3.5, 4), normalMap: cloneTex(floorTexSet.normalMap, 3.5, 4), roughnessMap: cloneTex(floorTexSet.roughnessMap, 3.5, 4),
     normalScale: new THREE.Vector2(0.5, 0.5),
   });
-  // Transmission glass is very expensive (extra refraction path). Opaque-ish Standard is enough.
-  const glassMat = new THREE.MeshStandardMaterial({
-    color: 0xd4eef8, transparent: true, opacity: 0.14, roughness: 0.08, metalness: 0.05,
-    side: THREE.DoubleSide, depthWrite: false,
-  });
+  // Transmission glass is expensive; hero bridge only. Escorts keep cheap glass.
+  const glassMat = lite
+    ? new THREE.MeshStandardMaterial({
+      color: 0xd4eef8, transparent: true, opacity: 0.14, roughness: 0.08, metalness: 0.05,
+      side: THREE.DoubleSide, depthWrite: false,
+    })
+    : new THREE.MeshPhysicalMaterial({
+      color: 0xcfeaf5,
+      transmission: 0.86,
+      thickness: 0.4,
+      ior: 1.5,
+      roughness: 0.05,
+      metalness: 0,
+      transparent: true,
+      opacity: 1,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      envMapIntensity: 1.1,
+    });
   const mullionMat = new THREE.MeshStandardMaterial({ color: 0x1c1f22, roughness: 0.5, metalness: 0.4 });
   const consoleMat = new THREE.MeshStandardMaterial({ color: 0x3d434a, roughness: 0.5, metalness: 0.35 });
   const consoleTrimMat = new THREE.MeshStandardMaterial({ color: 0x1a1d20, roughness: 0.4, metalness: 0.5 });
@@ -124,6 +138,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
     if (withWindows) {
       const glass = wallSegment(w * 0.94, winHi - winLo, glassMat);
       glass.position.set(cx, (winLo + winHi) / 2, z);
+      glass.renderOrder = 10;
       group.add(glass);
       const mullionCount = Math.max(2, Math.round(w / 2.2));
       for (let i = 0; i <= mullionCount; i++) {
@@ -150,6 +165,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
     if (withWindows) {
       const glass = geoRot(wallSegment(d * 0.94, winHi - winLo, glassMat));
       glass.position.set(x, (winLo + winHi) / 2, cz);
+      glass.renderOrder = 10;
       group.add(glass);
       const mullionCount = Math.max(2, Math.round(d / 2.2));
       for (let i = 0; i <= mullionCount; i++) {
@@ -324,6 +340,15 @@ export function buildBridgeInterior({ lite = false } = {}) {
   radarConsole.traverse((o) => o.layers.set(2));
   group.add(radarConsole);
 
+  // Sonar/ASW — port-aft corner, clear of the weapons console/chair (z 10.6-12.5),
+  // the port equipment rack (hugging the x=minX wall), and the fire bottle at
+  // (-2.2, minZ+1.1) — a distinct doctrine split from Radar's surface/air search.
+  const sonarConsole = buildConsole({ screenColor: screenMat, glowColor: 0x3dffa0, width: 2.0 });
+  sonarConsole.position.set(-4.2, floorY, 8.8);
+  sonarConsole.rotation.y = 0.35;
+  sonarConsole.traverse((o) => o.layers.set(2));
+  group.add(sonarConsole);
+
   // Starboard bridge-wing lookout — binocular pedestal + grated floor plate so the
   // player has a clear "this is a station" silhouette out by the wing glass.
   const lookoutGroup = new THREE.Group();
@@ -375,9 +400,16 @@ export function buildBridgeInterior({ lite = false } = {}) {
   // rotated -Z axis (mirrors how the unrotated helm mount sits ~1.9 back from its desk).
   const weaponsMount = new THREE.Vector3(-5.6, 0, 12.5).add(new THREE.Vector3(0, 0, -1.9).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.5));
   const radarMount = new THREE.Vector3(6.4, 0, 12.5).add(new THREE.Vector3(0, 0, -1.9).applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.5));
+  const sonarMount = new THREE.Vector3(-4.2, 0, 8.8).add(new THREE.Vector3(0, 0, -1.9).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.35));
   seatMarker(weaponsMount.x, weaponsMount.z, 0xffb02e);
   seatMarker(radarMount.x, radarMount.z, 0x4de8ff);
   seatMarker(8.2, 20.2, 0x3dffa0);
+  seatMarker(sonarMount.x, sonarMount.z, 0x3dffa0);
+  // TAO/CIC — the existing chart/briefing table (built below) doubles as the command
+  // post: no separate console, just a standing position south of the table looking
+  // north over it, matching how a TAO actually works a plot rather than sitting at a
+  // dedicated screen. Marked distinctly (amber-white) since there's no chair here.
+  seatMarker(0, 7.0, 0xffe9b0);
 
   // ---- densify the bridge so it stops reading as empty graybox ----
   const pipeMat = new THREE.MeshStandardMaterial({ color: 0x4a5560, roughness: 0.45, metalness: 0.7 });
@@ -499,7 +531,11 @@ export function buildBridgeInterior({ lite = false } = {}) {
     helm: new THREE.Vector3(0, floorY + 1.48, 12.9),
     weaponsStation: new THREE.Vector3(weaponsMount.x, floorY + 1.48, weaponsMount.z - 0.55),
     radar: new THREE.Vector3(radarMount.x, floorY + 1.48, radarMount.z - 0.55),
+    sonar: new THREE.Vector3(sonarMount.x, floorY + 1.48, sonarMount.z - 0.55),
     lookout: new THREE.Vector3(8.2, floorY + 1.72, 20.2),
+    // Standing post south of the chart table, looking north over it — no chair, no
+    // console screen; the "overview" camera mode does the rest (see PlayerController).
+    tao: new THREE.Vector3(0, floorY + 1.72, 7.0),
     spawn: new THREE.Vector3(0, 0, minZ + 2.2),
     floorY,
     bounds: { minX: minX + 0.4, maxX: maxX - 0.3, minZ: minZ + 0.6, maxZ: maxZ - 0.8 },

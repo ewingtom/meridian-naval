@@ -153,9 +153,9 @@ export class RenderPipeline {
     const dpr = window.devicePixelRatio || 1;
     const caps = {
       low: 1,
-      medium: Math.min(1.25, dpr),
-      high: Math.min(1.5, dpr),
-      ultra: Math.min(1.75, dpr),
+      medium: Math.min(1.5, dpr),
+      high: Math.min(1.65, dpr),
+      ultra: Math.min(1.85, dpr),
     };
     const pr = caps[q] ?? caps.medium;
     this.renderer.setPixelRatio(pr);
@@ -172,14 +172,16 @@ export class RenderPipeline {
 
     if (this.bloomPass) {
       this.bloomPass.enabled = usePost;
-      this.bloomPass.strength = q === 'ultra' ? 0.22 : 0.16;
+      this.bloomPass.strength = q === 'ultra' ? 0.26 : q === 'high' ? 0.22 : 0.2;
+      this.bloomPass.threshold = q === 'ultra' ? 0.62 : 0.68;
+      this.bloomPass.radius = q === 'ultra' ? 0.55 : 0.48;
     }
     if (this.gradePass) {
       this.gradePass.enabled = usePost;
-      this.gradePass.uniforms.uGrainAmount.value = q === 'ultra' ? 0.012 : (q === 'high' ? 0.006 : 0.0);
+      this.gradePass.uniforms.uGrainAmount.value = q === 'ultra' ? 0.012 : (q === 'high' ? 0.006 : 0.003);
       this.gradePass.uniforms.uVignetteStrength.value = q === 'ultra' ? 0.26 : 0.2;
-      this.gradePass.uniforms.uContrast.value = q === 'low' ? 1.0 : 1.08;
-      this.gradePass.uniforms.uSaturation.value = q === 'low' ? 1.0 : 1.1;
+      this.gradePass.uniforms.uContrast.value = q === 'low' ? 1.0 : 1.1;
+      this.gradePass.uniforms.uSaturation.value = q === 'low' ? 1.0 : 1.14;
     }
     if (this.fxaaPass) this.fxaaPass.enabled = usePost;
 
