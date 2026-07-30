@@ -90,7 +90,7 @@ export class RenderPipeline {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.28;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.composer = null;
@@ -176,8 +176,10 @@ export class RenderPipeline {
     }
     if (this.gradePass) {
       this.gradePass.enabled = usePost;
-      this.gradePass.uniforms.uGrainAmount.value = q === 'ultra' ? 0.012 : 0.0;
-      this.gradePass.uniforms.uVignetteStrength.value = q === 'ultra' ? 0.26 : 0.18;
+      this.gradePass.uniforms.uGrainAmount.value = q === 'ultra' ? 0.012 : (q === 'high' ? 0.006 : 0.0);
+      this.gradePass.uniforms.uVignetteStrength.value = q === 'ultra' ? 0.26 : 0.2;
+      this.gradePass.uniforms.uContrast.value = q === 'low' ? 1.0 : 1.08;
+      this.gradePass.uniforms.uSaturation.value = q === 'low' ? 1.0 : 1.1;
     }
     if (this.fxaaPass) this.fxaaPass.enabled = usePost;
 

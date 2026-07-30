@@ -118,6 +118,11 @@ export const SkyShader = {
       sky = mix(sky, cloudColor, cloud * cloudFade * uCloudiness);
 
       vec3 color = sky + sunContribution * (1.0 - cloud * cloudFade * 0.85);
+      // Break sky gradient banding (common WebGL 8-bit artifact on large smooth ramps)
+      float dither = (hash(gl_FragCoord.xy + uTime * 17.0) - 0.5) * (2.4 / 255.0);
+      color += dither;
+      // Soften near-horizon mach bands further with a tiny luma noise
+      color += (hash(gl_FragCoord.yx * 1.7) - 0.5) * (1.1 / 255.0);
       gl_FragColor = vec4(color, 1.0);
     }
   `,

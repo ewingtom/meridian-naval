@@ -28,31 +28,41 @@ const STATION_DEFS = {
     // bridge window ever could.
     cameraMode: 'chase',
     chaseOffset: new THREE.Vector3(0, 68, -150),
-    chaseLookAhead: 55,
-    fov: 62,
+    // Look-ahead point pulled in closer to the ship (was 55) and FOV opened up a bit
+    // (was 62) so the near field behind the stern — where the wake actually forms —
+    // falls inside the frustum instead of being cropped below the bottom edge. At the
+    // original values the downward look angle happened to end almost exactly at the
+    // transom, so the whole wake sat just off-screen no matter how bright it was.
+    chaseLookAhead: 28,
+    fov: 78,
     lookLimits: { yaw: Math.PI * 0.85, pitchMin: -0.55, pitchMax: 0.5 },
     promptText: 'Press E to take the Helm',
-    barText: 'HELM — W/S Throttle · A/D Rudder · E to leave',
+    barText: 'HELM — Telegraph · Rudder · Course to waypoint · E Leave',
     accent: '#4de8ff',
   },
   [Station.WEAPONS]: {
     mountKey: 'weaponsStation',
-    lookOffset: new THREE.Vector3(18, 0.8, 38),
-    fov: 50,
-    lookLimits: { yaw: 0.85, pitchMin: -0.35, pitchMax: 0.3 },
+    // Elevated tactical chase — tracks the designated contact when locked, otherwise
+    // looks ahead of the bow. Distinct from helm's high drone and from a seated reticle.
+    cameraMode: 'tactical',
+    chaseOffset: new THREE.Vector3(32, 38, -88),
+    chaseLookAhead: 120,
+    fov: 46,
+    lookLimits: { yaw: 1.05, pitchMin: -0.4, pitchMax: 0.32 },
     hideLayers: [2],
     promptText: 'Press E to man Weapons Station',
-    barText: 'WEAPONS — 1-4 Select · Click Fire · Tab Target · E Leave',
+    barText: 'WEAPONS — Track · Designate · Fire solution · E Leave',
     accent: '#ffb02e',
   },
   [Station.RADAR]: {
     mountKey: 'radar',
-    lookOffset: new THREE.Vector3(-18, 0.8, 38),
-    fov: 50,
-    lookLimits: { yaw: 0.85, pitchMin: -0.35, pitchMax: 0.3 },
+    // Nose into the console CRT — the tactical plot owns the picture, not the window.
+    lookOffset: new THREE.Vector3(0.2, -0.85, 6.5),
+    fov: 40,
+    lookLimits: { yaw: 0.55, pitchMin: -0.55, pitchMax: 0.2 },
     hideLayers: [2],
     promptText: 'Press E to man the Radar/Sonar Station',
-    barText: 'RADAR/SONAR — Q Sonar Ping · Tab Cycle · E to leave',
+    barText: 'RADAR — Filter · Range · Designate · Sonar · E Leave',
     accent: '#4de8ff',
   },
   [Station.LOOKOUT]: {
@@ -62,10 +72,10 @@ const STATION_DEFS = {
     fov: 38,
     lookLimits: { yaw: 1.6, pitchMin: -0.7, pitchMax: 0.45 },
     promptText: 'Press E to take the Lookout',
-    barText: 'LOOKOUT — Mouse Look · Scroll Zoom · E to leave',
+    barText: 'LOOKOUT — Scan · Zoom · Report contact (R) · E Leave',
     accent: '#3dffa0',
     zoomable: true,
-    zoomMin: 28,
+    zoomMin: 22,
     zoomMax: 55,
   },
 };
@@ -94,6 +104,10 @@ export class PlayerController {
     this.mouseSensScale = 1;
     this.invertY = false;
     this.lookoutZoom = 1;
+    /** World-space point the weapons tactical camera slews toward (set by main). */
+    this.trackTargetPos = null;
+    /** Soft lock: keep tactical cam glued to trackTargetPos when true. */
+    this.weaponsTrackLock = false;
 
     this._bindEvents();
     this._initForShip(playerShip);
@@ -176,7 +190,7 @@ export class PlayerController {
    * ship's present transform (not a snapshot) so it tracks movement/roll/pitch. */
   _stationWorldPose(name, out = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() }) {
     const def = STATION_DEFS[name];
-    if (def.cameraMode === 'chase') {
+    if (def.cameraMode === 'chase' || def.cameraMode === 'tactical') {
       // World-space rig, not a ship-local mount point: offset up/behind the hull in
       // the ship's OWN frame (so it swings around with her as she turns, like a
       // camera drone slaved to the ship) and look slightly ahead of her bow rather
@@ -184,9 +198,17 @@ export class PlayerController {
       const shipPos = this.ship.group.position;
       const shipQuat = this.ship.group.quaternion;
       out.pos.copy(def.chaseOffset).applyQuaternion(shipQuat).add(shipPos);
-      const lookTarget = shipPos.clone().addScaledVector(
-        new THREE.Vector3(0, 0, 1).applyQuaternion(shipQuat), def.chaseLookAhead || 0
-      );
+      let lookTarget;
+      if (def.cameraMode === 'tactical' && this.trackTargetPos && (this.weaponsTrackLock || this.trackTargetPos)) {
+        // Bias look toward the tracked contact so weapons feels like a director/chase cam.
+        lookTarget = this.trackTargetPos.clone();
+        lookTarget.y += 6;
+      } else {
+        const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(shipQuat);
+        lookTarget = shipPos.clone()
+          .addScaledVector(fwd, def.chaseLookAhead || 0)
+          .add(new THREE.Vector3(0, def.cameraMode === 'tactical' ? 10 : 0, 0));
+      }
       const m = new THREE.Matrix4().lookAt(out.pos, lookTarget, new THREE.Vector3(0, 1, 0));
       out.quat.setFromRotationMatrix(m);
       return out;
@@ -199,6 +221,17 @@ export class PlayerController {
     const m = new THREE.Matrix4().lookAt(out.pos, worldLook, new THREE.Vector3(0, 1, 0));
     out.quat.setFromRotationMatrix(m);
     return out;
+  }
+
+  /** True look bearing (0–360, north-referenced) from the live camera forward. */
+  getLookBearingDeg() {
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-6) return 0;
+    dir.normalize();
+    // Scene: +Z ~ north-ish for nav math used elsewhere (atan2(x,z)).
+    return ((THREE.MathUtils.radToDeg(Math.atan2(dir.x, dir.z)) % 360) + 360) % 360;
   }
 
   _applyStationLookLimits(name) {
@@ -229,7 +262,7 @@ export class PlayerController {
 
     const { pos, quat } = this._stationWorldPose(name);
     const def = STATION_DEFS[name];
-    this.rig.transitionTo(pos, quat, def.fov, 1.05, () => {
+    this.rig.transitionTo(pos, quat, def.fov, 1.45, () => {
       this.state = name;
       this.rig.lookEnabled = true;
       this.onStationChange(name);
@@ -255,7 +288,7 @@ export class PlayerController {
 
     const worldPos = this._walkWorldPosition();
     const worldQuat = this._walkWorldQuaternion();
-    this.rig.transitionTo(worldPos, worldQuat, 70, 0.9, () => {
+    this.rig.transitionTo(worldPos, worldQuat, 70, 1.25, () => {
       this.state = Station.WALK;
       this.onStationChange('WALK');
     });

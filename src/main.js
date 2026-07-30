@@ -10,10 +10,13 @@ import { PlayerController, Station, STATION_DEFS } from './player/PlayerControll
 import { WeaponsSystem } from './weapons/WeaponsSystem.js';
 import { RadarSystem } from './systems/RadarSystem.js';
 import { MissionSystem } from './systems/MissionSystem.js';
+import { DynamicOps } from './systems/DynamicOps.js';
+import { TaskForceCoop } from './systems/TaskForceCoop.js';
 import { WorldManager } from './world/WorldManager.js';
 import { buildIsland } from './world/Island.js';
 import { AudioEngine } from './audio/AudioEngine.js';
-import { ShipHUD, TacticalRadar, MainMenu, PauseMenu, SettingsPanel, CommsLog, DamageVignette, StationOverlay, LobbyMenu } from './ui/index.js';
+import { ShipHUD, TacticalRadar, MainMenu, PauseMenu, SettingsPanel, CommsLog, DamageVignette, StationOverlay, LobbyMenu, CoopPanel } from './ui/index.js';
+import { installFrameDumper } from './debug/frameDump.js';
 
 const canvas = document.getElementById('scene');
 const pipeline = new RenderPipeline(canvas);
@@ -31,7 +34,7 @@ ocean.setEnvMap(sky.envRT.texture);
 pipeline.bindSunLight(sky.sunLight);
 
 const fogColor = new THREE.Color(0x9dc3dc);
-scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00042);
+scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00036);
 ocean.setFogColor(fogColor);
 
 // ============================ CREWED SHIPS ============================
@@ -140,7 +143,13 @@ mp.onDisconnected = () => {
 };
 
 let currentObjective = null;
+let opsObjective = null; // DynamicOps flash tasking overlays mission text temporarily
 function setObjective(obj) { currentObjective = obj; }
+function setOpsObjective(order) {
+  opsObjective = order
+    ? { text: order.text, stationHint: order.stationHint, bearing: null, distanceM: null }
+    : null;
+}
 
 let shakeMag = 0;
 function shakeCamera(mag) { shakeMag = Math.max(shakeMag, mag); }
@@ -179,45 +188,8 @@ function announceAiDisengagement(ship) {
   commsLog.push({ speaker: `${shipCallsign(ship)} WEAPONS (AI)`, text: 'Target down or out of range. Stowing weapons, resuming patrol picture.', urgency: 'normal' });
 }
 
-// ---- Ambient task-force traffic: periodic radio chatter and, once the scripted
-// mission beats run out, fresh contacts to investigate — so a long patrol never goes
-// quiet. Anchored to real game state (spawns real entities, picks real bearings) per
-// the "keep everything anchored to game logic" directive, not just flavor text. ----
-const AMBIENT_COMMS = [
-  { speaker: 'CIC', text: 'Surface picture nominal, no unclassified contacts within twenty miles.', urgency: 'normal' },
-  { speaker: 'SONAR', text: 'Passive array holding on biologics only, no subsurface threat indication.', urgency: 'normal' },
-  { speaker: 'TASK FORCE ACTUAL', text: 'All units report readiness condition Zebra set and maintained. Well done.', urgency: 'normal' },
-  { speaker: 'CIC', text: 'Weather deck advisory — freshening sea state, secure loose gear topside.', urgency: 'normal' },
-  { speaker: 'HORIZON ACTUAL', text: 'Be advised, satellite pass in twenty mikes — maintain EMCON discipline.', urgency: 'normal' },
-];
-let nextAmbientAt = 26 + Math.random() * 14;
+// ---- Ambient radio is now owned by DynamicOps (orders + AI station chatter). ----
 let extraWaveCount = 0;
-function updateAmbientEvents(dt, elapsed) {
-  nextAmbientAt -= dt;
-  if (nextAmbientAt > 0) return;
-  nextAmbientAt = 40 + Math.random() * 35;
-
-  const missionDone = mission.beatIndex >= 5; // 'final' beat index in MissionSystem's BEATS table
-  if (missionDone && world.hostiles.length === 0 && extraWaveCount < 3 && (!mp.inSession || mp.isHost)) {
-    // Command keeps tasking the task force once the scripted patrol wraps up, instead
-    // of the ocean going empty — a fresh contact near the ship, framed as new orders.
-    extraWaveCount++;
-    const around = ships.player.group.position.clone().add(
-      new THREE.Vector3((Math.random() - 0.5) * 1200, 0, 900 + Math.random() * 600)
-    );
-    world.spawnWave('wave1', around);
-    hostileWaveSpawned = true;
-    commsLog.push({
-      speaker: 'HORIZON ACTUAL',
-      text: `New tasking, MERIDIAN — unclassified surface contact detected near your position. Investigate and prosecute if hostile.`,
-      urgency: 'warning',
-    });
-    audio.playRadioBlip();
-    return;
-  }
-  const line = AMBIENT_COMMS[Math.floor(Math.random() * AMBIENT_COMMS.length)];
-  commsLog.push(line);
-}
 
 // ============================ UI ============================
 const uiRoot = document.getElementById('ui-root');
@@ -227,7 +199,10 @@ hud.mount(uiRoot);
 hud.hide();
 
 const tacRadar = new TacticalRadar({
-  onSelectContact: (id) => { weapons.selectedTargetId = id; },
+  onSelectContact: (id) => {
+    if (String(id).startsWith('nav:') || String(id).startsWith('inbound:')) return;
+    weapons.selectedTargetId = id;
+  },
 });
 tacRadar.mount(uiRoot);
 tacRadar.hide();
@@ -235,11 +210,70 @@ tacRadar.hide();
 const stationOverlay = new StationOverlay();
 stationOverlay.mount(uiRoot);
 
+// Helm/radar station control state (shared with the seated-station input handler).
+let headingHold = false;
+let radarFilter = 'ALL';
+const RADAR_RANGES = [3000, 4500, 6000, 8000, 12000];
+let radarRangeIdx = 2;
+radar.rangeM = RADAR_RANGES[radarRangeIdx];
+
+stationOverlay.onTelegraph = (value) => {
+  if (playerController?.state === Station.HELM) throttleCmd = value;
+};
+stationOverlay.onFilterChange = (f) => { radarFilter = f; };
+stationOverlay.onRangeChange = (dir) => {
+  radarRangeIdx = THREE.MathUtils.clamp(radarRangeIdx + dir, 0, RADAR_RANGES.length - 1);
+  radar.rangeM = RADAR_RANGES[radarRangeIdx];
+};
+
 const commsLog = new CommsLog({ maxVisible: 6 });
 commsLog.mount(uiRoot);
 
 const damageVignette = new DamageVignette();
 damageVignette.mount(uiRoot);
+
+const taskForce = new TaskForceCoop({
+  ships,
+  autopilots,
+  world,
+  radar,
+  onComms: (line) => { commsLog.push(line); audio.playRadioBlip(); },
+  getSelectedTargetId: () => weapons.selectedTargetId,
+  setSelectedTargetId: (id) => { weapons.selectedTargetId = id; },
+  getLocalShip: () => localShip,
+  onSharedTrack: (id) => {
+    weapons.selectedTargetId = id;
+    const ent = world.entities.find((e) => e.id === id);
+    if (!ent) return;
+    const d = String(ent.domain || '').toUpperCase();
+    if (d === 'SUBSURFACE') weapons.selectWeapon('torpedo');
+    else if (d === 'AIR') weapons.selectWeapon('missile');
+    else weapons.selectWeapon('gun');
+  },
+});
+
+const coopPanel = new CoopPanel({
+  onAction: (action) => {
+    if (action === 'share') taskForce.shareTrack();
+    else if (action === 'engage') taskForce.engageShared();
+    else if (action === 'hold') taskForce.weaponsHold();
+    else if (action === 'ping') {
+      if (taskForce.requestEscortPing()) stationOverlay.triggerSonarPulse();
+    } else if (action === 'screen') taskForce.returnToScreen();
+    else if (action === 'affirm') taskForce.affirm();
+  },
+});
+coopPanel.mount(uiRoot);
+
+const dynamicOps = new DynamicOps({
+  world,
+  ships,
+  mission,
+  coop: taskForce,
+  onComms: (line) => { commsLog.push(line); audio.playRadioBlip(); },
+  onObjectiveHint: (order) => setOpsObjective(order),
+  isHost: () => !mp.inSession || mp.isHost,
+});
 
 let settingsOpenedFrom = 'main'; // 'main' | 'pause' — tracked ourselves since the UI
                                   // components don't expose an isOpen getter
@@ -285,6 +319,7 @@ const pauseMenu = new PauseMenu({
     pauseMenu.hide();
     gameStarted = false;
     hud.hide(); tacRadar.hide();
+    coopPanel.hide();
     stationOverlay.setStation(null);
     tacRadar.setStationFocus(false);
     if (document.pointerLockElement) document.exitPointerLock();
@@ -326,6 +361,7 @@ gameOverEl.querySelector('#gameover-restart').addEventListener('click', () => {
   damageVignette.setHullPct(100);
   gameStarted = false;
   hud.hide(); tacRadar.hide();
+  coopPanel.hide();
   // clear the battle: reset ships + wipe hostiles so a fresh patrol starts clean
   for (const e of world.entities) e.dispose(scene);
   world.entities = [];
@@ -428,6 +464,7 @@ const mainMenu = new MainMenu({
     mainMenu.hide();
     gameStarted = true;
     hud.show(); tacRadar.show();
+    coopPanel.show();
     canvas.requestPointerLock();
   },
   onMultiplayer: () => {
@@ -447,15 +484,15 @@ function beginPatrol() {
   unlockAudio();
   if (!mission.started) {
     mission.start();
-    world.spawnMerchantTraffic(ships.player.group.position);
-    world.spawnHorizonTaskForce(ships.player.group.position);
   }
+  if (!dynamicOps.started) dynamicOps.start();
   // brief cinematic sweep (task force + ship exterior) before handing off to the
   // first-person bridge spawn — see playPatrolIntro() below. gameStarted flips true
   // only once it completes, so nothing shows/updates HUD-side until the handoff.
   playPatrolIntro(() => {
     gameStarted = true;
     hud.show(); tacRadar.show();
+    coopPanel.show();
     showControlsIntro();
   });
 }
@@ -552,12 +589,12 @@ function playPatrolIntro(onDone) {
   const passLook = shipPos.clone().add(new THREE.Vector3(0, 6, -10));
   const passQuat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(passPos, passLook, up));
 
-  cameraRig.transitionTo(widePos, wideQuat, 45, 1.3, () => {
-    cameraRig.transitionTo(passPos, passQuat, 55, 2.0, () => {
+  cameraRig.transitionTo(widePos, wideQuat, 45, 2.1, () => {
+    cameraRig.transitionTo(passPos, passQuat, 55, 2.6, () => {
       // leg 3: blend into the player's actual first-person bridge spawn pose
       const bridgePos = playerController._walkWorldPosition();
       const bridgeQuat = playerController._walkWorldQuaternion();
-      cameraRig.transitionTo(bridgePos, bridgeQuat, 70, 1.8, () => {
+      cameraRig.transitionTo(bridgePos, bridgeQuat, 70, 2.4, () => {
         introPlaying = false;
         onDone();
       });
@@ -582,6 +619,11 @@ const playerController = new PlayerController({
     stationOverlay.setStation(seated ? station : null);
     hud.setAiming(station === Station.WEAPONS);
     tacRadar.setStationFocus(station === Station.RADAR);
+    if (station !== Station.HELM) headingHold = false;
+    if (station !== Station.WEAPONS) {
+      playerController.weaponsTrackLock = false;
+      playerController.trackTargetPos = null;
+    }
     // Dim the corner radar while seated at weapons/helm/lookout so the station UI owns the frame;
     // keep it visible (enlarged) at the radar console.
     if (station === Station.RADAR) tacRadar.show();
@@ -600,19 +642,110 @@ const playerController = new PlayerController({
   },
 });
 
-// ---- station-specific input: weapon select/fire is WEAPONS-only; sonar ping and
-// target cycling are available from either the weapons console or the radar/sonar
-// console, matching which physical station would plausibly have that control ----
+// ---- task-force net: available from any seat (and while walking the bridge) ----
+window.addEventListener('keydown', (e) => {
+  if (!gameStarted || paused || gameOver) return;
+  if (e.code === 'KeyC') { taskForce.shareTrack(); audio.playUiConfirm(); }
+  else if (e.code === 'KeyV') { taskForce.engageShared(); audio.playUiConfirm(); }
+  else if (e.code === 'KeyB') { taskForce.weaponsHold(); audio.playUiConfirm(); }
+  else if (e.code === 'KeyN') {
+    if (taskForce.requestEscortPing()) {
+      stationOverlay.triggerSonarPulse();
+      audio.playSonarPing();
+    }
+  } else if (e.code === 'KeyM') { taskForce.returnToScreen(); audio.playUiConfirm(); }
+  else if (e.code === 'KeyY') { taskForce.affirm(); audio.playUiConfirm(); }
+});
+
+// ---- station-specific inputs: each console owns a distinct control set ----
 window.addEventListener('keydown', (e) => {
   if (!gameStarted || paused) return;
   const st = playerController.state;
-  if (st !== Station.WEAPONS && st !== Station.RADAR) return;
+
+  if (st === Station.HELM) {
+    if (e.code === 'Digit1') throttleCmd = -1;
+    else if (e.code === 'Digit2') throttleCmd = -0.35;
+    else if (e.code === 'Digit3') throttleCmd = 0;
+    else if (e.code === 'Digit4') throttleCmd = 0.35;
+    else if (e.code === 'Digit5') throttleCmd = 0.7;
+    else if (e.code === 'Digit6') throttleCmd = 1;
+    else if (e.code === 'KeyH') {
+      headingHold = !headingHold;
+      audio.playUiConfirm();
+    } else if (e.code === 'KeyF') {
+      // One-shot steer toward waypoint
+      const wp = mission.currentWaypoint;
+      if (wp) {
+        const dx = wp.x - localShip.group.position.x;
+        const dz = wp.z - localShip.group.position.z;
+        const brg = Math.atan2(dx, dz);
+        let err = brg - localShip.physics.heading;
+        while (err > Math.PI) err -= Math.PI * 2;
+        while (err < -Math.PI) err += Math.PI * 2;
+        rudderCmd = THREE.MathUtils.clamp(err * 1.6, -1, 1);
+      }
+    }
+    return;
+  }
+
+  if (st === Station.RADAR) {
+    if (e.code === 'Digit1') radarFilter = 'ALL';
+    else if (e.code === 'Digit2') radarFilter = 'SURFACE';
+    else if (e.code === 'Digit3') radarFilter = 'AIR';
+    else if (e.code === 'Digit4') radarFilter = 'SUBSURFACE';
+    else if (e.code === 'Digit5') radarFilter = 'NAV';
+    else if (e.code === 'BracketLeft') {
+      radarRangeIdx = Math.max(0, radarRangeIdx - 1);
+      radar.rangeM = RADAR_RANGES[radarRangeIdx];
+    } else if (e.code === 'BracketRight') {
+      radarRangeIdx = Math.min(RADAR_RANGES.length - 1, radarRangeIdx + 1);
+      radar.rangeM = RADAR_RANGES[radarRangeIdx];
+    } else if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+      // Designate currently selected track to weapons
+      if (weapons.selectedTargetId && !String(weapons.selectedTargetId).startsWith('nav:')) {
+        commsLog.push({
+          speaker: 'CIC',
+          text: `Track ${weapons.selectedTargetId} designated to weapons.`,
+          urgency: 'warning',
+        });
+        audio.playUiConfirm();
+      }
+    }
+  }
+
   if (st === Station.WEAPONS) {
     if (e.code === 'Digit1') weapons.selectWeapon('gun');
     else if (e.code === 'Digit2') weapons.selectWeapon('missile');
     else if (e.code === 'Digit3') weapons.selectWeapon('torpedo');
     else if (e.code === 'Digit4') weapons.selectWeapon('drone');
+    else if (e.code === 'KeyT') {
+      playerController.weaponsTrackLock = !playerController.weaponsTrackLock;
+      audio.playUiConfirm();
+    } else if (e.code === 'KeyF' || e.code === 'Space') {
+      e.preventDefault();
+      fireSelectedWeapon();
+    } else if (e.code === 'KeyG') {
+      // Snap select nearest inbound threat's source if any, else nearest hostile
+      const inbound = getInboundThreats();
+      if (inbound.length) {
+        // Prefer nearest hostile surface/air for CIWS-style gun
+        weapons.selectWeapon('gun');
+        const hostiles = lastContacts.filter((c) => c.iff === 'HOSTILE' || c.iff === 'hostile');
+        if (hostiles.length) {
+          hostiles.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+          weapons.selectedTargetId = hostiles[0].id;
+          playerController.weaponsTrackLock = true;
+        }
+      }
+    }
   }
+
+  if (st === Station.LOOKOUT && e.code === 'KeyR') {
+    reportLookoutContact();
+    return;
+  }
+
+  if (st !== Station.WEAPONS && st !== Station.RADAR) return;
   if (e.code === 'KeyQ') {
     radar.triggerSonarPing(localShip.group.position.clone());
     audio.playSonarPing();
@@ -628,16 +761,166 @@ canvas.addEventListener('click', () => {
 });
 
 function cycleTarget() {
-  const contacts = lastContacts || [];
+  const contacts = (lastContacts || []).filter((c) => !c.isWaypoint && !String(c.id).startsWith('nav:') && !String(c.id).startsWith('inbound:'));
   if (!contacts.length) return;
   const idx = contacts.findIndex((c) => c.id === weapons.selectedTargetId);
   const next = contacts[(idx + 1) % contacts.length];
   weapons.selectedTargetId = next.id;
 }
 
+function waypointNav(playerPos, wp, name = 'VIGIL') {
+  if (!wp) return null;
+  const dx = wp.x - playerPos.x;
+  const dz = wp.z - playerPos.z;
+  const distanceM = Math.hypot(dx, dz);
+  const bearing = ((THREE.MathUtils.radToDeg(Math.atan2(dx, dz)) % 360) + 360) % 360;
+  return { name, bearing, distanceM, x: dx, z: dz };
+}
+
+function getInboundThreats() {
+  const shipPos = localShip.group.position;
+  const threats = [];
+  for (const p of weapons.projectiles) {
+    if (p.dead) continue;
+    if (!['enemyMissile', 'torpedo', 'airMissile'].includes(p.type)) continue;
+    const dist = p.position.distanceTo(shipPos);
+    if (dist > 3500) continue;
+    const dx = p.position.x - shipPos.x;
+    const dz = p.position.z - shipPos.z;
+    const bearing = ((THREE.MathUtils.radToDeg(Math.atan2(dx, dz)) % 360) + 360) % 360;
+    threats.push({
+      id: `inbound:${p.id || threats.length}`,
+      name: p.type === 'torpedo' ? 'TORPEDO' : 'INBOUND MSL',
+      bearing,
+      distanceM: dist,
+      x: dx,
+      z: dz,
+      domain: 'INBOUND',
+      iff: 'INBOUND',
+      isInbound: true,
+    });
+  }
+  threats.sort((a, b) => a.distanceM - b.distanceM);
+  return threats;
+}
+
+function evaluateFireSolution(targetEntity, targetInfo) {
+  const key = weapons.selectedWeapon;
+  if (!targetInfo && key !== 'gun' && key !== 'drone') {
+    return { ok: false, reason: 'NO TRACK', detail: 'Tab to select a contact' };
+  }
+  if (key === 'missile') {
+    if (!targetEntity || targetEntity.domain !== 'SURFACE') {
+      return { ok: false, reason: 'WRONG DOMAIN', detail: 'Missiles need a surface track' };
+    }
+    if (targetEntity.iff === 'FRIENDLY') {
+      return { ok: false, reason: 'FRIENDLY', detail: 'Cannot engage friendly track' };
+    }
+  }
+  if (key === 'torpedo') {
+    if (!targetEntity || targetEntity.domain !== 'SUBSURFACE') {
+      return { ok: false, reason: 'NO SUB TRACK', detail: 'Ping sonar (Radar Q) then select sub' };
+    }
+  }
+  if (targetEntity && targetInfo) {
+    // Require the director camera to be roughly on the target when track-lock is off
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    const toT = targetEntity.position.clone().sub(camera.position).normalize();
+    const align = camDir.dot(toT);
+    if (!playerController.weaponsTrackLock && align < 0.55 && key !== 'drone' && key !== 'gun') {
+      return { ok: false, reason: 'OFF BORESIGHT', detail: 'Slew onto target or press T to lock track' };
+    }
+    if (targetInfo.distanceM > 5500 && key === 'gun') {
+      return { ok: false, reason: 'OUT OF RANGE', detail: 'Close range or switch to missile' };
+    }
+  }
+  if (!weapons.canFireSelected()) {
+    return { ok: false, reason: 'NOT READY', detail: 'Magazine or cooldown' };
+  }
+  return { ok: true, reason: 'SOLUTION GOOD', detail: playerController.weaponsTrackLock ? 'Track lock engaged' : 'Boresight clear' };
+}
+
+function reportLookoutContact() {
+  const sighted = findSightedContact();
+  if (!sighted?.entity) {
+    commsLog.push({ speaker: 'LOOKOUT', text: 'Nothing in the glass — keep sweeping.', urgency: 'normal' });
+    return;
+  }
+  const e = sighted.entity;
+  e.visualId = true;
+  if (e.iff === 'UNKNOWN' || e.iff === 'NEUTRAL') {
+    // Visual classify: merchants stay neutral but marked; unknowns become hostile if military-looking domains
+    if (e.domain === 'SURFACE' && e.name?.toLowerCase().includes('merchant')) {
+      e.iff = 'NEUTRAL';
+    } else if (e.iff === 'UNKNOWN') {
+      e.iff = 'HOSTILE';
+    }
+  }
+  const brg = formatBearingSafe(playerController.getLookBearingDeg());
+  commsLog.push({
+    speaker: 'LOOKOUT',
+    text: `Visual contact bearing ${brg} — ${e.name || 'unknown'}, ${(e.domain || '').toLowerCase()}, classified ${(e.iff || '').toLowerCase()}.`,
+    urgency: e.iff === 'HOSTILE' ? 'warning' : 'normal',
+  });
+  weapons.selectedTargetId = e.id;
+  audio.playUiConfirm();
+}
+
+function formatBearingSafe(deg) {
+  const d = Math.round(((deg % 360) + 360) % 360);
+  return String(d).padStart(3, '0');
+}
+
+function findSightedContact() {
+  const camDir = new THREE.Vector3();
+  camera.getWorldDirection(camDir);
+  const origin = camera.position;
+  let best = null;
+  let bestScore = 0.82; // cos angle threshold
+  const sources = [...world.entities, ...Object.values(ships).filter((s) => s !== localShip)];
+  for (const e of sources) {
+    if (!e || e.destroyed || e.alive === false) continue;
+    const pos = e.position || e.group?.position;
+    if (!pos) continue;
+    const to = pos.clone().sub(origin);
+    const dist = to.length();
+    if (dist < 40 || dist > 5000) continue;
+    to.normalize();
+    const align = camDir.dot(to);
+    if (align > bestScore) {
+      bestScore = align;
+      best = {
+        entity: e,
+        name: e.name,
+        domain: e.domain,
+        iff: e.iff,
+        distanceM: dist,
+        reported: !!e.visualId,
+      };
+    }
+  }
+  return best;
+}
+
 function fireSelectedWeapon() {
   const mpts = localShip.mountPoints;
   const targetEntity = world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive);
+  const selected = lastContacts.find((c) => c.id === weapons.selectedTargetId);
+  let targetInfo = null;
+  if (selected) {
+    targetInfo = {
+      distanceM: Math.hypot(selected.x, selected.z),
+      bearing: ((THREE.MathUtils.radToDeg(Math.atan2(selected.x, selected.z)) % 360) + 360) % 360,
+      domain: selected.domain,
+      iff: selected.iff,
+    };
+  }
+  const sol = evaluateFireSolution(targetEntity || null, targetInfo);
+  if (!sol.ok && weapons.selectedWeapon !== 'gun') {
+    return;
+  }
+
   let fromLocal = mpts.gunBarrelTip;
   if (weapons.selectedWeapon === 'missile') fromLocal = mpts.missileTubes[0];
   else if (weapons.selectedWeapon === 'torpedo') fromLocal = mpts.missileTubes[2] || mpts.missileTubes[0];
@@ -671,8 +954,10 @@ function fireSelectedWeapon() {
 window.GAME = {
   pipeline, sky, ocean, camera, scene, renderer, THREE, ships, localShipId, cameraRig, playerController,
   weapons, radar, world, mission, audio, hud, tacRadar, mainMenu, pauseMenu, settings, commsLog,
-  damageVignette, island, islet, stationOverlay, Station, mp, lobby,
+  damageVignette, island, islet, stationOverlay, Station, mp, lobby, dynamicOps, taskForce, coopPanel,
 };
+const frameDumper = installFrameDumper(renderer);
+window.GAME.dumpFrames = frameDumper.dumpFrames;
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -712,8 +997,22 @@ function animate() {
   if (active) {
     if (gameStarted && playerController.state === Station.HELM) {
       const k = playerController.keys;
-      throttleCmd = THREE.MathUtils.clamp(throttleCmd + ((k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0)) * dt * 0.8, -1, 1);
-      rudderCmd = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
+      // Continuous nudge still available alongside telegraph notches
+      throttleCmd = THREE.MathUtils.clamp(
+        throttleCmd + ((k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0)) * dt * 0.55,
+        -1, 1
+      );
+      if (headingHold && mission.currentWaypoint) {
+        const wp = mission.currentWaypoint;
+        const dx = wp.x - localShip.group.position.x;
+        const dz = wp.z - localShip.group.position.z;
+        let err = Math.atan2(dx, dz) - localShip.physics.heading;
+        while (err > Math.PI) err -= Math.PI * 2;
+        while (err < -Math.PI) err += Math.PI * 2;
+        rudderCmd = THREE.MathUtils.clamp(err * 1.35, -1, 1);
+      } else {
+        rudderCmd = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
+      }
     }
 
     for (const [shipId, ship] of Object.entries(ships)) {
@@ -721,9 +1020,19 @@ function animate() {
       if (!ship.networked) {
         const helmHuman = mp.helmIsHuman(shipId); // if true here, it's always the local human (see MultiplayerSession)
         if (helmHuman) {
-          if (ship === localShip && playerController.state === Station.HELM) ship.setCommand(throttleCmd, rudderCmd);
+          // Keep last telegraph/rudder while the local helm player is at another
+          // station or walking the bridge — otherwise leaving HELM kills way and
+          // the force drifts dead in the water mid-fight.
+          if (ship === localShip) ship.setCommand(throttleCmd, rudderCmd);
         } else {
-          autopilots[shipId].updateHelm(dt, { anchorShip: ships.player, waypoint: mission.currentWaypoint });
+          const engageEnt = taskForce.sharedTargetId
+            ? world.entities.find((e) => e.id === taskForce.sharedTargetId && !e.destroyed)
+            : null;
+          autopilots[shipId].updateHelm(dt, {
+            anchorShip: ships.player,
+            waypoint: mission.currentWaypoint,
+            engageWorldPos: engageEnt?.position || null,
+          });
         }
         if (!mp.weaponsIsHuman(shipId)) {
           autopilots[shipId].updateWeapons(dt, {
@@ -731,6 +1040,8 @@ function animate() {
             fireWeapon: fireFriendlyWeapon,
             onEngage: (autoShip, target) => announceAiEngagement(autoShip, target),
             onDisengage: (autoShip) => announceAiDisengagement(autoShip),
+            weaponsPolicy: taskForce.weaponsPolicy,
+            sharedTargetId: taskForce.sharedTargetId,
           });
         }
       }
@@ -764,7 +1075,10 @@ function animate() {
 
   if (active) {
     radar.update(dt);
-    if (gameStarted) updateAmbientEvents(dt, elapsed);
+    if (gameStarted) {
+      dynamicOps.update(dt);
+      coopPanel.update(taskForce.status);
+    }
     world.update(dt, {
       playerPos: ships.player.group.position,
       playerShip: ships.player,
@@ -790,13 +1104,22 @@ function animate() {
 
     const heading = ((THREE.MathUtils.radToDeg(localShip.physics.heading) % 360) + 360) % 360;
     const w = weapons.getWeaponInfo();
+    const navTarget = wp || mission.waypoints[0];
+    const navName = (wp === mission.waypoints[1]) ? 'FORMATION' : 'VIGIL';
+    const nav = waypointNav(ships.player.group.position, navTarget, navName);
+    const objBearing = nav ? nav.bearing : null;
+    const displayObjective = opsObjective || currentObjective;
     hud.update({
       heading,
       speedKnots: localShip.physics.speedKnots,
       throttleFraction: throttleCmd,
       hullPct: (localShip.health / localShip.maxHealth) * 100,
       subsystems: { engine: 'nominal', radar: 'nominal', weapons: 'nominal' },
-      objective: currentObjective ? { text: currentObjective.text, bearing: null, distanceM: wp ? Math.round(ships.player.group.position.distanceTo(wp)) : null } : null,
+      objective: displayObjective ? {
+        text: displayObjective.text,
+        bearing: objBearing,
+        distanceM: nav ? Math.round(nav.distanceM) : null,
+      } : null,
       selectedWeapon: { name: w.name, ammo: w.ammo === Infinity ? 999 : w.ammo, maxAmmo: w.maxAmmo === Infinity ? 999 : w.maxAmmo, ready: w.ready },
     });
     damageVignette.setHullPct((localShip.health / localShip.maxHealth) * 100);
@@ -806,21 +1129,65 @@ function animate() {
     // radar blip of yourself), same as single-player never showing the player ship.
     const radarSources = [...world.entities, ...Object.values(ships).filter((s) => s !== localShip)];
     lastContacts = radar.buildContacts(localShip.group.position, radarSources, weapons.selectedTargetId);
+
+    // Patrol station / formation as a persistent nav mark on the plot + HUD.
+    if (nav) {
+      lastContacts.push({
+        id: navName === 'FORMATION' ? 'nav:formation' : 'nav:vigil',
+        x: nav.x,
+        z: nav.z,
+        domain: 'NAV',
+        iff: 'NAV',
+        name: navName,
+        selected: false,
+        distanceM: Math.round(nav.distanceM),
+        isWaypoint: true,
+      });
+    }
+
+    const inbound = getInboundThreats();
+    for (const t of inbound) {
+      lastContacts.push({
+        id: t.id,
+        x: t.x,
+        z: t.z,
+        domain: 'INBOUND',
+        iff: 'INBOUND',
+        name: t.name,
+        selected: false,
+        distanceM: Math.round(t.distanceM),
+        isInbound: true,
+      });
+    }
+
+    const filteredContacts = lastContacts.filter((c) => {
+      if (radarFilter === 'ALL') return true;
+      if (radarFilter === 'NAV') return c.isWaypoint || c.domain === 'NAV';
+      if (radarFilter === 'SURFACE') return c.domain === 'SURFACE' || c.domain === 'surface';
+      if (radarFilter === 'AIR') return c.domain === 'AIR' || c.domain === 'air';
+      if (radarFilter === 'SUBSURFACE') return c.domain === 'SUBSURFACE' || c.domain === 'subsurface';
+      return true;
+    });
+
     tacRadar.update({
       rangeM: radar.rangeM,
       playerHeading: heading,
-      contacts: lastContacts.map((c) => ({
+      contacts: filteredContacts.map((c) => ({
         id: c.id, x: c.x, z: c.z,
-        domain: c.domain.toLowerCase(),
-        iff: c.iff.toLowerCase(),
+        domain: String(c.domain).toLowerCase(),
+        iff: String(c.iff).toLowerCase(),
         name: c.name,
-        selected: c.selected,
+        selected: c.selected || c.id === weapons.selectedTargetId,
       })),
     });
 
+    // Weapons director camera tracks the designated live entity.
+    const trackEnt = world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive);
+    playerController.trackTargetPos = trackEnt ? trackEnt.position.clone() : null;
+
     // Station overlay instruments — only when seated so we don't burn DOM writes while walking.
     if (STATION_DEFS[playerController.state]) {
-      const selected = lastContacts.find((c) => c.id === weapons.selectedTargetId) || null;
+      const selected = lastContacts.find((c) => c.id === weapons.selectedTargetId && !c.isWaypoint && !c.isInbound) || null;
       const targetEntity = selected
         ? world.entities.find((e) => e.id === selected.id)
         : null;
@@ -838,26 +1205,38 @@ function animate() {
           bearing,
         };
       }
+      const fireSolution = evaluateFireSolution(targetEntity || null, targetInfo);
+      const sighted = playerController.state === Station.LOOKOUT ? findSightedContact() : null;
       stationOverlay.update({
         heading,
         speedKnots: localShip.physics.speedKnots,
         throttleFraction: throttleCmd,
         rudder: rudderCmd,
+        headingHold,
+        waypoint: nav,
         selectedWeapon: weapons.selectedWeapon,
         ammo: { ...weapons.ammo },
         weaponReady: weapons.canFireSelected(),
         target: targetInfo,
-        contacts: lastContacts.map((c) => ({
+        fireSolution,
+        trackLock: playerController.weaponsTrackLock,
+        inbound,
+        contacts: filteredContacts.map((c) => ({
           id: c.id,
           name: c.name,
           iff: c.iff,
           domain: c.domain,
           distanceM: Math.hypot(c.x, c.z),
+          isWaypoint: !!c.isWaypoint,
         })),
         selectedTargetId: weapons.selectedTargetId,
+        filter: radarFilter,
+        rangeM: radar.rangeM,
+        navWaypoint: nav,
         lookoutZoom: playerController.lookoutZoom,
+        lookBearing: playerController.getLookBearingDeg(),
+        sighted,
       });
-      void targetEntity;
     }
   }
 

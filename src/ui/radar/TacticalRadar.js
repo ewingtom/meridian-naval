@@ -60,6 +60,8 @@ const IFF_COLOR = {
   friendly: '#3dffa0',
   hostile: '#ff4444',
   unknown: '#ffb02e',
+  nav: '#4de8ff',
+  inbound: '#ff6a3d',
 };
 
 export class TacticalRadar {
@@ -403,6 +405,21 @@ export class TacticalRadar {
       ctx.arc(0, 0, 5, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
+    } else if (domain === 'nav' || domain === 'waypoint') {
+      // waypoint star / diamond with outer ring
+      ctx.setLineDash([3, 2]);
+      ctx.arc(0, 0, 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(0, -7); ctx.lineTo(4, 0); ctx.lineTo(0, 7); ctx.lineTo(-4, 0);
+      ctx.closePath();
+      ctx.fill();
+    } else if (domain === 'inbound') {
+      // chevron inbound
+      ctx.moveTo(0, 7); ctx.lineTo(5, -4); ctx.lineTo(0, -1); ctx.lineTo(-5, -4);
+      ctx.closePath();
+      ctx.fill();
     } else {
       // surface: triangle
       ctx.moveTo(0, -6); ctx.lineTo(5.5, 5); ctx.lineTo(-5.5, 5);
@@ -417,7 +434,7 @@ export class TacticalRadar {
   /** Enlarge + center the panel when the player mans the Radar station. */
   setStationFocus(focused) {
     if (!this.root) return;
-    const size = focused ? 420 : 260;
+    const size = focused ? 480 : 260;
     this.options.size = size;
     this.root.style.setProperty('--radar-size', `${size}px`);
     this.root.classList.toggle('stn-radar-focus', !!focused);

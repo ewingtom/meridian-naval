@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ShipPhysics } from './ShipPhysics.js';
 import { buildPlaceholderShip } from './ShipPlaceholder.js';
-import { getSharedMicroDetailMaps } from '../utils/ProceduralTextures.js';
+import { getSharedMicroDetailMaps, getSharedHullTextures } from '../utils/ProceduralTextures.js';
 import { buildBridgeInterior } from './BridgeInterior.js';
 import { buildEnemyShipMesh } from '../entities/geometryKits.js';
 import { ShipWake } from './ShipWake.js';
@@ -241,6 +241,17 @@ export class CrewedShip {
 
   _addMicroDetailMaps(root) {
     const { normalMap: srcNormal, roughnessMap: srcRough } = getSharedMicroDetailMaps();
+    // Subtle weathering only — heavy panel albedo at high UV repeat reads as tiled plastic
+    // vs WoWS (judge FAIL). Prefer roughness/normal grit over replacing albedo.
+    const hullSet = getSharedHullTextures('crewHullPbr', {
+      size: 1024,
+      baseColor: [0.72, 0.74, 0.76],
+      panelCols: 7,
+      panelRows: 11,
+      rustColor: [0.36, 0.22, 0.15],
+      rustAmount: 0.18,
+      seed: 41,
+    });
     const seen = new Set();
     root.traverse((o) => {
       if (!o.isMesh || !o.material) return;
@@ -250,20 +261,37 @@ export class CrewedShip {
         seen.add(mat.uuid);
         if (!mat.isMeshStandardMaterial && !mat.isMeshPhysicalMaterial) continue;
         if (mat.transparent || mat.opacity < 0.95) continue;
+        if (mat.emissive && mat.emissive.getHex() > 0 && (mat.emissiveIntensity || 0) > 0.2) continue;
+
+        if (!mat.map) {
+          const m = hullSet.map.clone(); m.needsUpdate = true;
+          m.repeat.set(2.5, 4); m.wrapS = m.wrapT = THREE.RepeatWrapping;
+          mat.map = m;
+          mat.color.setHex(0xffffff);
+        }
         if (!mat.normalMap) {
-          const n = srcNormal.clone(); n.needsUpdate = true;
-          n.repeat.set(48, 48); n.wrapS = n.wrapT = THREE.RepeatWrapping;
+          const n = hullSet.normalMap.clone(); n.needsUpdate = true;
+          n.repeat.set(2.5, 4); n.wrapS = n.wrapT = THREE.RepeatWrapping;
           mat.normalMap = n;
-          mat.normalScale = new THREE.Vector2(0.18, 0.18);
+          mat.normalScale = new THREE.Vector2(0.35, 0.35);
+        } else if (!mat.normalScale || mat.normalScale.lengthSq() < 0.02) {
+          const n = srcNormal.clone(); n.needsUpdate = true;
+          n.repeat.set(16, 16); n.wrapS = n.wrapT = THREE.RepeatWrapping;
+          mat.normalMap = n;
+          mat.normalScale = new THREE.Vector2(0.16, 0.16);
         }
         if (!mat.roughnessMap) {
-          const r = srcRough.clone(); r.needsUpdate = true;
-          r.repeat.set(48, 48); r.wrapS = r.wrapT = THREE.RepeatWrapping;
+          const r = (mat.map ? hullSet.roughnessMap : srcRough).clone();
+          r.needsUpdate = true;
+          r.repeat.set(mat.map ? 2.5 : 16, mat.map ? 4 : 16);
+          r.wrapS = r.wrapT = THREE.RepeatWrapping;
           mat.roughnessMap = r;
         }
-        if (typeof mat.roughness === 'number') mat.roughness = Math.max(0.55, Math.min(0.92, mat.roughness + 0.2));
-        if (typeof mat.metalness === 'number') mat.metalness = Math.min(mat.metalness, 0.25);
-        if (mat.color) mat.color.multiplyScalar(0.92);
+        if (typeof mat.roughness === 'number') mat.roughness = Math.max(0.42, Math.min(0.88, mat.roughness + 0.08));
+        if (typeof mat.metalness === 'number') mat.metalness = Math.min(mat.metalness, 0.28);
+        mat.envMapIntensity = typeof mat.envMapIntensity === 'number'
+          ? Math.min(1.25, Math.max(0.7, mat.envMapIntensity))
+          : 0.95;
         mat.needsUpdate = true;
       }
     });

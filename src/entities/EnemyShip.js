@@ -126,7 +126,7 @@ export class EnemyShip extends Entity {
     const distToPlayer = this.physics.position.distanceTo(playerPos);
 
     if (this.state === State.PATROL) {
-      if (distToPlayer < this.engageRangeM) {
+      if (this.iff !== 'FRIENDLY' && distToPlayer < this.engageRangeM) {
         this.state = State.ENGAGE;
       } else if (this.patrolPoints.length) {
         const target = this.patrolPoints[this._patrolIdx];
@@ -137,7 +137,9 @@ export class EnemyShip extends Entity {
         this.physics.setCommand(0.3, 0);
       }
     } else if (this.state === State.ENGAGE) {
-      if (distToPlayer > this.engageRangeM * 1.35) {
+      if (this.iff === 'FRIENDLY') {
+        this.state = State.PATROL;
+      } else if (distToPlayer > this.engageRangeM * 1.35) {
         this.state = State.PATROL;
       } else {
         const desiredRange = this.gunRangeM * 0.75;

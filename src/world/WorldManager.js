@@ -21,15 +21,55 @@ export class WorldManager {
         patrolPoints: [p.clone(), p.clone().add(new THREE.Vector3(600, 0, -300))],
         scene: this.scene,
       }));
-    } else if (name === 'sub1') {
-      const p = aroundPos.clone().add(new THREE.Vector3(-300, 0, 500));
-      this.entities.push(new Submarine({ name: 'Sonar Contact Sierra-1', position: p, scene: this.scene }));
-    } else if (name === 'airWave') {
+    } else if (name === 'sub1' || name === 'sub_roamer') {
+      const off = name === 'sub_roamer'
+        ? new THREE.Vector3((Math.random() - 0.5) * 900, 0, 350 + Math.random() * 700)
+        : new THREE.Vector3(-300, 0, 500);
+      const p = aroundPos.clone().add(off);
+      this.entities.push(new Submarine({
+        name: `Sierra-${1 + Math.floor(Math.random() * 9)}`,
+        position: p,
+        scene: this.scene,
+      }));
+    } else if (name === 'airWave' || name === 'air_probe') {
+      const n = name === 'air_probe' ? 2 : 2;
+      for (let i = 0; i < n; i++) {
+        const p = aroundPos.clone().add(new THREE.Vector3(-1500 + i * 220 + Math.random() * 100, 0, -1600 - i * 160));
+        this.entities.push(new Aircraft({ name: `Bandit ${String.fromCharCode(65 + i)}`, position: p, scene: this.scene }));
+      }
+    } else if (name === 'patrol_pair' || name === 'fleet_probe') {
       for (let i = 0; i < 2; i++) {
-        const p = aroundPos.clone().add(new THREE.Vector3(-1500 + i * 200, 0, -1800 - i * 150));
-        this.entities.push(new Aircraft({ name: `Bandit ${i + 1}`, position: p, scene: this.scene }));
+        const p = aroundPos.clone().add(new THREE.Vector3(280 + i * 180 + Math.random() * 120, 0, 160 + i * 90));
+        this.entities.push(new EnemyShip({
+          name: `Master ${2 + this.entities.length} (DDG)`,
+          position: p,
+          patrolPoints: [p.clone(), p.clone().add(new THREE.Vector3(500, 0, -280 + i * 40))],
+          scene: this.scene,
+        }));
       }
     }
+  }
+
+  /** Distant friendly screen units — radar-visible friendlies that aren't boardable
+   * crewed ships, so the plot reads as a real task force beyond Meridian + 2 escorts. */
+  spawnFriendlyScreen(aroundPos) {
+    if (this._friendlyScreenSpawned) return;
+    this._friendlyScreenSpawned = true;
+    const offsets = [
+      new THREE.Vector3(-900, 0, 700),
+      new THREE.Vector3(1100, 0, 500),
+    ];
+    offsets.forEach((off, i) => {
+      const p = aroundPos.clone().add(off);
+      const ship = new EnemyShip({
+        name: i === 0 ? 'FS Watchfire (FF)' : 'FS Auriga (FF)',
+        position: p,
+        patrolPoints: [p.clone(), p.clone().add(new THREE.Vector3(200, 0, -150))],
+        scene: this.scene,
+      });
+      ship.iff = 'FRIENDLY';
+      this.entities.push(ship);
+    });
   }
 
   /** Neutral civilian traffic — a merchant/tanker transiting a long lane across the

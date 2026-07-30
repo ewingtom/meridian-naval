@@ -19,3 +19,4 @@ export { CommsLog } from './notifications/CommsLog.js';
 export { DamageVignette } from './notifications/DamageVignette.js';
 export { StationOverlay } from './stations/StationOverlay.js';
 export { LobbyMenu } from './lobby/LobbyMenu.js';
+export { CoopPanel } from './coop/CoopPanel.js';

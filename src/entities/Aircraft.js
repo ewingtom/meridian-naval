@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { Entity, Domain, IFF } from './Entity.js';
 import { buildAircraftMesh } from './geometryKits.js';
 
 const State = { INBOUND: 'INBOUND', ATTACK_RUN: 'ATTACK_RUN', EGRESS: 'EGRESS', SHOT_DOWN: 'SHOT_DOWN' };
+const AIR_MODEL_URL = '/assets/models/enemy_aircraft.glb';
 
 export class Aircraft extends Entity {
   constructor({ name = 'Bandit', position, scene }) {
@@ -17,6 +19,31 @@ export class Aircraft extends Entity {
     this._egressTimer = 0;
     this._fallVel = 0;
     scene.add(this.group);
+    this._tryLoadBlenderHull();
+  }
+
+  async _tryLoadBlenderHull() {
+    try {
+      const gltf = await new GLTFLoader().loadAsync(AIR_MODEL_URL);
+      const inst = gltf.scene.clone(true);
+      const box = new THREE.Box3().setFromObject(inst);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const targetSpan = 16; // ~wingspan meters
+      const s = targetSpan / Math.max(size.x, size.z, 1);
+      inst.scale.setScalar(s);
+      inst.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+      while (this.group.children.length) this.group.remove(this.group.children[0]);
+      this.group.add(inst);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[Aircraft] Blender hull unavailable, keeping procedural mesh.', err?.message || err);
+    }
   }
 
   onDestroyed() {

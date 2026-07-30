@@ -11,13 +11,13 @@ const BEATS = [
     comms: [
       { speaker: 'TASK FORCE ACTUAL', text: 'MERIDIAN, this is HORIZON ACTUAL. Task Force 21 is proceeding to patrol station VIGIL. Take your station and get underway.', urgency: 'normal' },
     ],
-    objective: { text: 'Get underway — take the helm and set a course to VIGIL', bearing: null, distanceM: null },
+    objective: { text: 'Get underway — take the helm and steer toward VIGIL (marked on tactical)', bearing: null, distanceM: null },
   },
   {
     id: 'transit',
     trigger: 'depart',
     comms: [
-      { speaker: 'CIC', text: 'Course laid in for patrol station VIGIL, bearing marked on your repeater. Task force screening units are holding formation off your beam.', urgency: 'normal' },
+      { speaker: 'CIC', text: 'Course laid in for patrol station VIGIL — cyan diamond on your tactical plot. Helm: match course error to zero.', urgency: 'normal' },
     ],
     objective: { text: 'Proceed to patrol station VIGIL', useWaypoint: 0 },
   },
@@ -36,7 +36,7 @@ const BEATS = [
     comms: [
       { speaker: 'SONAR', text: 'Conn, Sonar — transient contact, possible submerged hostile bearing two-two-zero. Recommend active sonar search.', urgency: 'warning' },
     ],
-    objective: { text: 'Localize and prosecute the submerged contact — use SONAR PING (Q) at Weapons Station' },
+    objective: { text: 'Localize and prosecute the submerged contact — man Radar, ping SONAR (Q), then Weapons', useWaypoint: 0 },
     spawn: 'sub1',
   },
   {

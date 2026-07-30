@@ -1,10 +1,12 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { Entity, Domain, IFF } from './Entity.js';
 import { buildSubmarineMesh } from './geometryKits.js';
 
 const State = { PATROL: 'PATROL', STALK: 'STALK', SURFACE_ATTACK: 'SURFACE_ATTACK', SINKING: 'SINKING' };
 const PERISCOPE_DEPTH = -0.4;
 const SUBMERGED_DEPTH = -14;
+const SUB_MODEL_URL = '/assets/models/enemy_submarine.glb';
 
 export class Submarine extends Entity {
   constructor({ name = 'Sonar Contact', position, scene }) {
@@ -22,6 +24,32 @@ export class Submarine extends Entity {
     /** revealed briefly when at periscope depth, or always if player pings sonar nearby */
     this.sonarRevealed = false;
     scene.add(this.group);
+    this._tryLoadBlenderHull();
+  }
+
+  async _tryLoadBlenderHull() {
+    try {
+      const gltf = await new GLTFLoader().loadAsync(SUB_MODEL_URL);
+      const inst = gltf.scene.clone(true);
+      // Fit ~95m LOA into the procedural placeholder scale ballpark
+      const box = new THREE.Box3().setFromObject(inst);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const targetLen = 95;
+      const s = targetLen / Math.max(size.z, 1);
+      inst.scale.setScalar(s);
+      inst.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+      while (this.group.children.length) this.group.remove(this.group.children[0]);
+      this.group.add(inst);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[Submarine] Blender hull unavailable, keeping procedural mesh.', err?.message || err);
+    }
   }
 
   onDestroyed() {

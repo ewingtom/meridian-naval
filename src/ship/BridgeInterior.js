@@ -70,9 +70,9 @@ export function buildBridgeInterior({ lite = false } = {}) {
   const mullionMat = new THREE.MeshStandardMaterial({ color: 0x1c1f22, roughness: 0.5, metalness: 0.4 });
   const consoleMat = new THREE.MeshStandardMaterial({ color: 0x3d434a, roughness: 0.5, metalness: 0.35 });
   const consoleTrimMat = new THREE.MeshStandardMaterial({ color: 0x1a1d20, roughness: 0.4, metalness: 0.5 });
-  const screenMat = new THREE.MeshStandardMaterial({ color: 0x07222a, roughness: 0.35, emissive: 0x1fb6d8, emissiveIntensity: 0.55 });
-  const screenMatAmber = new THREE.MeshStandardMaterial({ color: 0x2a1a06, roughness: 0.35, emissive: 0xff9d2e, emissiveIntensity: 0.45 });
-  const ceilingLightMat = new THREE.MeshStandardMaterial({ color: 0xcfe8ff, emissive: 0xaed4f2, emissiveIntensity: 0.9, roughness: 0.5 });
+  const screenMat = new THREE.MeshStandardMaterial({ color: 0x07222a, roughness: 0.28, emissive: 0x2ad4f0, emissiveIntensity: 0.85 });
+  const screenMatAmber = new THREE.MeshStandardMaterial({ color: 0x2a1a06, roughness: 0.28, emissive: 0xffa640, emissiveIntensity: 0.7 });
+  const ceilingLightMat = new THREE.MeshStandardMaterial({ color: 0xcfe8ff, emissive: 0xc4e0f8, emissiveIntensity: 1.15, roughness: 0.45 });
 
   // ---- floor & ceiling ----
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(maxX - minX, maxZ - minZ), floorMat);
@@ -94,7 +94,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
     strip.position.set(stripX, ceilY - 0.05, 14.5);
     group.add(strip);
     if (!lite) {
-      const fill = new THREE.PointLight(0xd7ebf8, 5.5, 16, 1.6);
+      const fill = new THREE.PointLight(0xd7ebf8, 7.2, 18, 1.45);
       fill.position.set(stripX, ceilY - 0.55, 14.5);
       group.add(fill);
     }
@@ -180,6 +180,37 @@ export function buildBridgeInterior({ lite = false } = {}) {
   const aftHeader = wallSegment(doorHalf * 2, ceilY - winHi, wallMat);
   aftHeader.position.set(0, (winHi + ceilY) / 2, minZ);
   group.add(aftHeader);
+
+  // Cable trays + bulkhead ribs — breaks up graybox wall planes from chase/walk cameras.
+  const cableMat = new THREE.MeshStandardMaterial({ color: 0x1a1e22, roughness: 0.55, metalness: 0.65, envMapIntensity: 0.2 });
+  const ribMat = new THREE.MeshStandardMaterial({ color: 0x34393e, roughness: 0.7, metalness: 0.25, envMapIntensity: 0.12 });
+  for (let i = 0; i < 5; i++) {
+    const z = minZ + 2.2 + i * 3.2;
+    const tray = new THREE.Mesh(new THREE.BoxGeometry(maxX - minX - 1.2, 0.08, 0.28), cableMat);
+    tray.position.set((minX + maxX) / 2, ceilY - 0.35, z);
+    group.add(tray);
+    const conduit = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, maxX - minX - 2.0, 8), cableMat);
+    conduit.rotation.z = Math.PI / 2;
+    conduit.position.set((minX + maxX) / 2, ceilY - 0.55, z + 0.35);
+    group.add(conduit);
+  }
+  for (let i = 0; i < 6; i++) {
+    const z = minZ + 1.5 + i * 2.8;
+    for (const x of [minX + 0.18, maxX - 0.18]) {
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.14, ceilY - floorY - 0.4, 0.22), ribMat);
+      rib.position.set(x, (floorY + ceilY) / 2, z);
+      group.add(rib);
+    }
+  }
+  // Deck runner lights along the center aisle (soft emissive strips).
+  const runnerMat = new THREE.MeshStandardMaterial({
+    color: 0x0a2a32, emissive: 0x2a9bb0, emissiveIntensity: 0.22, roughness: 0.55, metalness: 0.1,
+  });
+  for (let i = 0; i < 4; i++) {
+    const runner = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.02, 1.4), runnerMat);
+    runner.position.set(0, floorY + 0.015, minZ + 4 + i * 4.2);
+    group.add(runner);
+  }
 
   // ---- console builder ----
   // Boxy BoxGeometry/CylinderGeometry placeholder, shown immediately so the room isn't
@@ -350,7 +381,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
 
   // ---- densify the bridge so it stops reading as empty graybox ----
   const pipeMat = new THREE.MeshStandardMaterial({ color: 0x4a5560, roughness: 0.45, metalness: 0.7 });
-  const cableMat = new THREE.MeshStandardMaterial({ color: 0x1a1e22, roughness: 0.85, metalness: 0.15 });
+  const conduitMat = new THREE.MeshStandardMaterial({ color: 0x1a1e22, roughness: 0.85, metalness: 0.15 });
   const panelMat = new THREE.MeshStandardMaterial({ color: 0x5c646c, roughness: 0.62, metalness: 0.28 });
   const rustMat = new THREE.MeshStandardMaterial({ color: 0x3a342e, roughness: 0.9, metalness: 0.2 });
   const grateMat = new THREE.MeshStandardMaterial({ color: 0x1c2228, roughness: 0.78, metalness: 0.45 });
@@ -361,7 +392,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
     tray.position.set(x, ceilY - 0.35, (minZ + maxZ) / 2);
     group.add(tray);
     for (let i = 0; i < 5; i++) {
-      const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, maxZ - minZ - 3, 6), cableMat);
+      const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, maxZ - minZ - 3, 6), conduitMat);
       cable.rotation.x = Math.PI / 2;
       cable.position.set(x + (i - 2) * 0.09, ceilY - 0.48, (minZ + maxZ) / 2);
       group.add(cable);

@@ -28,15 +28,15 @@ export class SkySystem {
     this.sunDirection = new THREE.Vector3();
 
     // Key sun light — warm, low-ish for long dramatic shadows / glitter
-    this.sunLight = new THREE.DirectionalLight(0xfff2e0, 3.2);
+    this.sunLight = new THREE.DirectionalLight(0xfff2e0, 3.6);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(1024, 1024);
     this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 900;
-    this.sunLight.shadow.camera.left = -260;
-    this.sunLight.shadow.camera.right = 260;
-    this.sunLight.shadow.camera.top = 260;
-    this.sunLight.shadow.camera.bottom = -260;
+    this.sunLight.shadow.camera.far = 1100;
+    this.sunLight.shadow.camera.left = -320;
+    this.sunLight.shadow.camera.right = 320;
+    this.sunLight.shadow.camera.top = 320;
+    this.sunLight.shadow.camera.bottom = -320;
     this.sunLight.shadow.bias = -0.0007;
     this.sunLight.shadow.normalBias = 0.02;
     scene.add(this.sunLight);
@@ -50,8 +50,8 @@ export class SkySystem {
     this.pmrem.compileEquirectangularShader();
     this.envRT = null;
 
-    this._elevation = 34;
-    this._azimuth = 200;
+    this._elevation = 22;
+    this._azimuth = 215;
     this.setSunAngle(this._elevation, this._azimuth);
     this.updateEnvMap();
   }
@@ -70,7 +70,7 @@ export class SkySystem {
     this.sunLight.target.position.set(0, 0, 0);
 
     const t = THREE.MathUtils.clamp(elevationDeg / 45, 0, 1);
-    this.sunLight.intensity = THREE.MathUtils.lerp(1.6, 3.6, t);
+    this.sunLight.intensity = THREE.MathUtils.lerp(1.8, 4.1, t);
     const warm = new THREE.Color(0xff9d52);
     const white = new THREE.Color(0xfff4e2);
     this.sunLight.color.copy(warm).lerp(white, t);

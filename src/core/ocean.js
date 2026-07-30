@@ -2,14 +2,14 @@ import * as THREE from 'three';
 
 // Gerstner wave parameters: [dirX, dirZ, steepness, wavelength, speed]
 const WAVE_SET = [
-  [1.0, 0.2, 0.34, 74.0, 1.05],
-  [0.65, -0.75, 0.28, 48.0, 1.3],
-  [-0.4, 0.9, 0.22, 31.0, 1.7],
-  [0.9, 0.5, 0.16, 19.0, 2.1],
-  [-0.75, -0.6, 0.13, 12.0, 2.6],
-  [0.2, -1.0, 0.09, 7.2, 3.4],
-  [-1.0, 0.15, 0.07, 4.1, 4.3],
-  [0.55, 0.83, 0.05, 2.3, 5.6],
+  [1.0, 0.2, 0.38, 82.0, 1.05],
+  [0.65, -0.75, 0.32, 52.0, 1.28],
+  [-0.4, 0.9, 0.26, 34.0, 1.65],
+  [0.9, 0.5, 0.19, 21.0, 2.05],
+  [-0.75, -0.6, 0.15, 13.0, 2.55],
+  [0.2, -1.0, 0.11, 7.8, 3.35],
+  [-1.0, 0.15, 0.085, 4.4, 4.2],
+  [0.55, 0.83, 0.06, 2.5, 5.5],
 ];
 
 function buildWaveGLSL() {
@@ -33,10 +33,10 @@ vec3 gerstner(vec3 p, float t, out vec3 tangent, out vec3 binormal) {
     float k = 6.28318530718 / wavelength;
     float c = sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
     float f = k * (dot(dir, p.xz) - c * t * 3.0);
-    float a = steepness / k / float(NUM_WAVES) * 2.2;
+    float a = steepness / k / float(NUM_WAVES) * 2.85;
     offset.x += dir.x * a * cos(f);
     offset.z += dir.y * a * cos(f);
-    offset.y += a * sin(f) * 0.72;
+    offset.y += a * sin(f) * 0.82;
 
     float wa = k * a;
     tangent += vec3(
@@ -134,7 +134,7 @@ void main() {
   vec3 viewDir = normalize(uCamPos - vWorldPos);
   float dist = length(uCamPos - vWorldPos);
   // Skip expensive noise beyond ~220m; fade in near the camera.
-  float nearDetail = smoothstep(220.0, 55.0, dist) * uDetailLevel;
+  float nearDetail = smoothstep(420.0, 70.0, dist) * uDetailLevel;
 
   vec3 N = normalize(vNormal);
   if (nearDetail > 0.01) {
@@ -152,43 +152,62 @@ void main() {
   }
 
   float NdotV = clamp(dot(N, viewDir), 0.0, 1.0);
-  float fresnel = pow(1.0 - NdotV, 5.0);
-  fresnel = mix(0.02, 1.0, fresnel);
+  float fresnel = pow(1.0 - NdotV, 4.2);
+  fresnel = mix(0.04, 1.0, fresnel);
 
   vec3 reflectDir = reflect(-viewDir, N);
   vec3 reflColor = textureCube(uEnvMap, reflectDir).rgb;
+  // Boost sky reflection so distant water reads like glass, not matte paint
+  reflColor *= 1.15;
 
   float depthMix = clamp(dot(N, vec3(0.0,1.0,0.0)), 0.0, 1.0);
-  vec3 waterColor = mix(uDeepColor, uShallowColor, pow(depthMix, 3.0) * 0.4);
+  vec3 waterColor = mix(uDeepColor, uShallowColor, pow(depthMix, 2.4) * 0.55);
 
   vec3 halfDir = normalize(uSunDirection + viewDir);
   float NdotH = clamp(dot(N, halfDir), 0.0, 1.0);
-  float spec = min(pow(NdotH, 720.0) * 0.85, 0.85);
-  float sparkle = nearDetail > 0.2
-    ? smoothstep(0.965, 1.0, noise(vWorldPos.xz * 9.0 + uTime * 1.9))
+  float spec = min(pow(NdotH, 560.0) * 1.15, 1.1);
+  float sparkle = nearDetail > 0.15
+    ? smoothstep(0.955, 1.0, noise(vWorldPos.xz * 11.0 + uTime * 2.1))
     : 0.0;
-  float glitter = pow(NdotH, 240.0) * sparkle * 0.75;
-  vec3 sunSpec = uSunColor * (spec + glitter) * (0.4 + 0.6 * vFresnelBoost);
+  float glitter = pow(NdotH, 180.0) * sparkle * 1.05;
+  vec3 sunSpec = uSunColor * (spec + glitter) * (0.45 + 0.7 * vFresnelBoost);
 
-  float foamMask = clamp(vFoamFactor * 1.45 - 0.15, 0.0, 1.0);
-  if (nearDetail > 0.15 && foamMask > 0.02) {
-    float foamNoise = fbm(vWorldPos.xz * 0.35 + uTime * 0.12);
-    foamMask *= smoothstep(0.2, 0.78, foamNoise * 0.7 + vFoamFactor * 0.3);
+  float foamMask = clamp(vFoamFactor * 1.65 - 0.08, 0.0, 1.0);
+  // Crest foam readable from chase altitude; micro-noise only near camera
+  if (nearDetail > 0.1 && foamMask > 0.015) {
+    float foamNoise = fbm(vWorldPos.xz * 0.32 + uTime * 0.12);
+    foamMask *= smoothstep(0.12, 0.7, foamNoise * 0.5 + vFoamFactor * 0.5);
+  } else {
+    foamMask *= smoothstep(0.04, 0.5, vFoamFactor);
   }
-  vec3 foamColor = vec3(0.92, 0.96, 0.99);
+  vec3 foamColor = vec3(0.94, 0.97, 1.0);
 
-  float absorb = 1.0 - exp(-dist * 0.00035);
-  waterColor = mix(waterColor, uDeepColor * 0.72, absorb * 0.65);
+  // Distant water deepens + desaturates (beer-lambert-ish) so the near field pops
+  float absorb = 1.0 - exp(-dist * 0.00032);
+  waterColor = mix(waterColor, uDeepColor * 0.68, absorb * 0.7);
 
-  float horizonBoost = pow(1.0 - clamp(N.y, 0.0, 1.0), 2.5);
-  vec3 base = mix(waterColor, reflColor, fresnel * 0.88 + horizonBoost * 0.25);
-  base += sunSpec * (1.0 + horizonBoost * 0.5);
-  base = mix(base, foamColor, foamMask);
+  // Soft-edge the Gerstner tile so it doesn't hard-cut into the skirt (horizon steps)
+  float edgeDist = length(vWorldPos.xz - uCamPos.xz);
+  float edgeFade = smoothstep(1000.0, 1320.0, edgeDist);
 
+  // Second specular lobe (broader) sells "wet" water from chase altitude like WoWS
+  float broadSpec = pow(NdotH, 48.0) * 0.22;
+  sunSpec += uSunColor * broadSpec * (0.35 + 0.65 * nearDetail);
+
+  float horizonBoost = pow(1.0 - clamp(N.y, 0.0, 1.0), 2.2);
+  vec3 base = mix(waterColor, reflColor, fresnel * 0.94 + horizonBoost * 0.32);
+  base += sunSpec * (1.1 + horizonBoost * 0.6);
+  base = mix(base, foamColor, foamMask * 0.95);
+  // Skirt blend uses deeper water tint, not fog gray — reduces hard horizon seam
+  vec3 skirtTint = mix(uDeepColor * 0.85, uFogColor * 0.55, 0.35);
+  base = mix(base, skirtTint, edgeFade);
+
+  // Distance fog — softstep to reduce banding on large flat gradients
   float fog = 1.0 - exp(-dist * uFogDensity);
   fog = clamp(fog, 0.0, 1.0);
-  fog *= smoothstep(0.0, 1.0, fog);
-  vec3 color = mix(base, uFogColor, fog * 0.92);
+  fog = smoothstep(0.0, 1.0, fog);
+  float dither = (hash(gl_FragCoord.xy * 0.15 + uTime) - 0.5) * (1.5 / 255.0);
+  vec3 color = mix(base, uFogColor, fog * 0.9) + dither;
 
   gl_FragColor = vec4(color, 1.0);
 }
@@ -198,9 +217,9 @@ export class OceanField {
   constructor(renderer, sunDirection) {
     this.renderer = renderer;
 
-    // 160² (~51k tris) instead of 320² (~205k) — largest single vertex/GPU win after post.
-    this.size = 2600;
-    this.segments = 160;
+    // 220² (~97k tris) — smoother Gerstner silhouette at chase altitude vs 160².
+    this.size = 2800;
+    this.segments = 220;
     const geo = new THREE.PlaneGeometry(this.size, this.size, this.segments, this.segments);
     geo.rotateX(-Math.PI / 2);
     geo.computeBoundingSphere();
@@ -216,11 +235,11 @@ export class OceanField {
       uSunDirection: { value: sunDirection.clone() },
       uSunColor: { value: new THREE.Color(0xfff0d8) },
       uEnvMap: { value: null },
-      uDeepColor: { value: new THREE.Color(0x02182a) },
-      uShallowColor: { value: new THREE.Color(0x0c5c66) },
-      uFogColor: { value: new THREE.Color(0xaec7d6) },
-      uFogDensity: { value: 0.00075 },
-      uDetailLevel: { value: 0.65 },
+      uDeepColor: { value: new THREE.Color(0x021526) },
+      uShallowColor: { value: new THREE.Color(0x0e6a72) },
+      uFogColor: { value: new THREE.Color(0xb0c9d8) },
+      uFogDensity: { value: 0.00068 },
+      uDetailLevel: { value: 0.75 },
     };
 
     this.material = new THREE.ShaderMaterial({
@@ -235,12 +254,21 @@ export class OceanField {
     this.mesh.receiveShadow = false;
     this.mesh.frustumCulled = false;
 
-    // Far skirt so the grid edge never shows against the horizon
-    const skirtGeo = new THREE.RingGeometry(this.size * 0.48, 18000, 64, 1);
+    // Far skirt: high radial density so the horizon doesn't stair-step against the sky.
+    // Color-matched to fog and lifted near sea level so the Gerstner grid edge soft-fades
+    // instead of reading as a hard polygonal silhouette.
+    const skirtGeo = new THREE.RingGeometry(this.size * 0.42, 22000, 192, 1);
     skirtGeo.rotateX(-Math.PI / 2);
-    this.skirtMat = new THREE.MeshBasicMaterial({ color: 0x0b3c46, fog: false });
+    this.skirtMat = new THREE.MeshBasicMaterial({
+      color: 0x0b3c46,
+      fog: false,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
     this.skirt = new THREE.Mesh(skirtGeo, this.skirtMat);
-    this.skirt.position.y = -1.2;
+    this.skirt.position.y = -0.35;
+    this.skirt.renderOrder = -1;
 
     this.group = new THREE.Group();
     this.group.add(this.mesh);
@@ -257,8 +285,8 @@ export class OceanField {
   }
 
   setQuality(q) {
-    const levels = { low: 0.15, medium: 0.55, high: 0.85, ultra: 1.0 };
-    this.uniforms.uDetailLevel.value = levels[q] ?? 0.55;
+    const levels = { low: 0.2, medium: 0.7, high: 0.92, ultra: 1.0 };
+    this.uniforms.uDetailLevel.value = levels[q] ?? 0.7;
   }
 
   update(dt, elapsed, camera) {
@@ -278,8 +306,8 @@ export class OceanField {
       const k = (2 * Math.PI) / wavelength;
       const c = Math.sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
       const f = k * (dx * x + dz * z - c * t * 3.0);
-      const a = (steepness / k / WAVE_SET.length) * 2.2;
-      y += a * Math.sin(f) * 0.72;
+      const a = (steepness / k / WAVE_SET.length) * 2.85;
+      y += a * Math.sin(f) * 0.82;
     }
     return y;
   }
