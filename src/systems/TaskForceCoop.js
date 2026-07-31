@@ -99,7 +99,7 @@ export class TaskForceCoop {
     const tip = domain === 'SUBSURFACE'
       ? 'Weapons — select ASROC (3) before release.'
       : domain === 'AIR'
-        ? 'Weapons — missiles preferred on air tracks.'
+        ? 'Weapons — missiles or gun on air tracks; release when ready.'
         : 'Stand by for weapons release.';
     this.onComms({
       speaker: `${call} CIC`,

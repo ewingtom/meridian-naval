@@ -13,10 +13,10 @@ export const SkyShader = {
     uZenithColor: { value: new Color(0x1c4d86) },
     uHorizonColor: { value: new Color(0xaecbdd) },
     uSunColor: { value: new Color(0xfff2d6) },
-    uCloudCoverage: { value: 0.28 },
-    uCloudiness: { value: 0.85 },
+    uCloudCoverage: { value: 0.18 },
+    uCloudiness: { value: 0.95 },
     uCloudColorLit: { value: new Color(0xf4f7fb) },
-    uCloudColorShadow: { value: new Color(0x3a4a5c) },
+    uCloudColorShadow: { value: new Color(0x2e3c4c) },
     uTime: { value: 0 },
   },
   vertexShader: /* glsl */`

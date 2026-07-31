@@ -71,7 +71,11 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   hullGeo.rotateY(Math.PI / 2);
   // naval haze-grey hull (not a solid IFF-colour paint job — real ships aren't painted
   // that way); IFF colour is reserved for small trim/marking accents instead.
-  const hullMat = texturedMat('enemyHullTex', 'navalGrey', { baseColor: [0.44, 0.46, 0.49], panelCols: 9, panelRows: 4, rustAmount: 0.4 }, 9, 3);
+  // Modern warships are kept clean — heavy rust streaking reads as an old/derelict
+  // hull. Keep just enough staining to break up flat paint; the rusty look is
+  // reserved for the civilian merchant below, where it's both realistic and a useful
+  // visual contrast against the military units.
+  const hullMat = texturedMat('enemyHullTex_v3', 'navalGrey', { baseColor: [0.38, 0.40, 0.43], panelCols: 4, panelRows: 3, rustAmount: 0.08 }, 6, 2.2);
   const hull = new THREE.Mesh(hullGeo, hullMat);
   hull.castShadow = true;
   hull.receiveShadow = true;
@@ -87,7 +91,7 @@ export function buildEnemyShipMesh(iffColor = 0x8a2f2f) {
   stripe.position.set(0, 0.3, 0);
   group.add(stripe);
 
-  const superMat = texturedMat('enemySuperTex', 'navalGreySuper', { baseColor: [0.52, 0.54, 0.57], panelCols: 5, panelRows: 5, rustAmount: 0.2 }, 3, 3, { normalScale: 0.5 });
+  const superMat = texturedMat('enemySuperTex_v3', 'navalGreySuper', { baseColor: [0.44, 0.46, 0.49], panelCols: 3, panelRows: 3, rustAmount: 0.05 }, 2.4, 2.4, { normalScale: 0.35 });
   const glassMat = mat('enemyGlass', 0x121a20, 0.2, 0.6);
 
   // angled bridge block (tapered, not a plain box) with a dark window band
@@ -229,7 +233,8 @@ export function buildMerchantShipMesh() {
 /** Submarine — tapered hull (lathed profile) + sail with planes, mostly submerged. */
 export function buildSubmarineMesh() {
   const group = new THREE.Group();
-  const bodyMat = texturedMat('subBodyTex', 'darkHull', { baseColor: [0.15, 0.16, 0.17], panelCols: 7, panelRows: 12, rustAmount: 0.3, rustColor: [0.22, 0.17, 0.14] }, 9, 4, { metalness: 0.5, normalScale: 1.0 });
+  // Modern subs are clad in matte black anechoic tiles — near-zero rust, low metalness.
+  const bodyMat = texturedMat('subBodyTex_v2', 'darkHull', { baseColor: [0.15, 0.16, 0.17], panelCols: 7, panelRows: 12, rustAmount: 0.08, rustColor: [0.20, 0.18, 0.17] }, 9, 4, { metalness: 0.35, normalScale: 1.0 });
 
   // Tapered teardrop hull via a lathed profile (bow taper -> parallel body -> stern taper)
   const profile = [
@@ -294,8 +299,9 @@ export function buildSubmarineMesh() {
 export function buildAircraftMesh(iffColor = 0x8a2f2f) {
   const group = new THREE.Group();
   const skinColor = new THREE.Color(iffColor);
-  const m = texturedMat('aircraftSkinTex_' + iffColor, 'aircraftSkin_' + iffColor,
-    { baseColor: [skinColor.r, skinColor.g, skinColor.b], panelCols: 5, panelRows: 10, rustAmount: 0.15, rustColor: [skinColor.r * 0.4, skinColor.g * 0.4, skinColor.b * 0.4] },
+  // Combat aircraft don't rust — just faint panel-seam soot/exhaust staining.
+  const m = texturedMat('aircraftSkinTex_v2_' + iffColor, 'aircraftSkin_v2_' + iffColor,
+    { baseColor: [skinColor.r, skinColor.g, skinColor.b], panelCols: 5, panelRows: 10, rustAmount: 0.04, rustColor: [skinColor.r * 0.55, skinColor.g * 0.55, skinColor.b * 0.55] },
     6, 10, { metalness: 0.6, roughness: 0.7, normalScale: 0.8 });
   const darkM = mat('aircraftDark', 0x1a1a1c, 0.3, 0.5);
   const glassM = mat('aircraftGlass', 0x1c2e38, 0.15, 0.7);

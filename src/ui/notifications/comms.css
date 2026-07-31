@@ -2,19 +2,16 @@
 
 /* ---------------- CommsLog ---------------- */
 .comms-log {
-  /* Was left:18px/bottom:18px — identical corner to ShipHUD's hull/speed panels
-     (hud.css), which is exactly the overlap the judge review caught. Every other
-     corner is already claimed by a HUD panel (top-center: compass/objective,
-     top-right: tactical radar, bottom-left: hull/speed, bottom-right: weapon), so
-     dock the comms stack on the right, above the weapon readout panel instead. */
+  /* Left column, above ShipHUD hull/speed — right column is radar + Task Force Net. */
   position: absolute;
-  right: 18px;
-  bottom: 190px;
-  width: min(420px, 34vw);
-  min-width: 280px;
+  left: 18px;
+  right: auto;
+  bottom: 200px;
+  width: min(360px, 32vw);
+  min-width: 240px;
   z-index: 20;
   opacity: 1;
-  transition: opacity 0.3s;
+  transition: opacity 0.3s, left 0.25s, bottom 0.25s, width 0.25s;
 }
 .comms-log.comms-hidden { opacity: 0; }
 

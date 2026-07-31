@@ -10,7 +10,7 @@ import { el, formatBearing, formatDistance } from '../lib/utils.js';
 
 const WEAPON_SLOTS = [
   { key: 'gun', digit: '1', name: '130mm Deck Gun', infinite: true, role: 'SURFACE / AIR' },
-  { key: 'missile', digit: '2', name: 'Anti-Ship Missile', ammoKey: 'missile', role: 'SURFACE LOCK' },
+  { key: 'missile', digit: '2', name: 'Guided Missile', ammoKey: 'missile', role: 'SURFACE / AIR' },
   { key: 'torpedo', digit: '3', name: 'ASROC Torpedo', ammoKey: 'torpedo', role: 'SUBSURFACE' },
   { key: 'drone', digit: '4', name: 'Recon Drone', ammoKey: 'drone', role: 'ISR' },
 ];
@@ -53,6 +53,8 @@ export class StationOverlay {
     this.onTelegraph = null; // (value) => void
     this.onFilterChange = null;
     this.onRangeChange = null;
+    this.onSelectContact = null; // (id) => void — click a contact row
+    this.onDesignate = null; // () => void — double-click / Enter pathway from UI
   }
 
   mount(container = document.getElementById('ui-root')) {
@@ -512,7 +514,8 @@ export class StationOverlay {
       const iff = (c.iff || 'unknown').toLowerCase();
       const dist = c.distanceM != null ? formatDistance(c.distanceM) : '';
       const dom = (c.domain || '').toString().slice(0, 4).toUpperCase();
-      return `<div class="stn-contact-row ${c.id === selectedId ? 'is-selected' : ''} ${c.isWaypoint ? 'is-nav' : ''}">
+      const nav = c.isWaypoint ? 'is-nav' : '';
+      return `<div class="stn-contact-row ${c.id === selectedId ? 'is-selected' : ''} ${nav}" data-contact-id="${c.id}" role="button" tabindex="0">
         <span class="stn-contact-dot ${iff}"></span>
         <span>${c.name || c.id} <em>${dom}</em></span>
         <span>${dist}</span>
@@ -521,6 +524,7 @@ export class StationOverlay {
     this._rdr.list.innerHTML = rows.length
       ? rows.join('')
       : `<div class="stn-contact-row"><span></span><span>NO CONTACTS IN FILTER</span><span></span></div>`;
+    this._wireContactList(this._rdr.list);
 
     const nav = s.navWaypoint;
     if (nav && this._rdr.navCue) {
@@ -532,7 +536,7 @@ export class StationOverlay {
   _updateSonar(s) {
     const subs = (s.allContacts || []).filter((c) => String(c.domain).toUpperCase() === 'SUBSURFACE');
     const rows = subs.slice(0, 10).map((c) => `
-      <div class="stn-contact-row ${c.id === s.selectedTargetId ? 'is-selected' : ''}">
+      <div class="stn-contact-row ${c.id === s.selectedTargetId ? 'is-selected' : ''}" data-contact-id="${c.id}" role="button" tabindex="0">
         <span class="stn-contact-dot hostile"></span>
         <span>${c.name || c.id} <em>SUB</em></span>
         <span>${c.distanceM != null ? formatDistance(c.distanceM) : ''}</span>
@@ -540,6 +544,7 @@ export class StationOverlay {
     this._snr.list.innerHTML = rows.length
       ? rows.join('')
       : `<div class="stn-contact-row"><span></span><span>NO SUBSURFACE CONTACTS</span><span></span></div>`;
+    this._wireContactList(this._snr.list);
     if (this._snr.depth) {
       this._snr.depth.textContent = subs.length
         ? `Nearest sub ${formatDistance(subs[0].distanceM)} — ping to localize`
@@ -559,7 +564,7 @@ export class StationOverlay {
     const rows = contacts.slice(0, 16).map((c) => {
       const iff = (c.iff || 'unknown').toLowerCase();
       const dom = (c.domain || '').toString().slice(0, 4).toUpperCase();
-      return `<div class="stn-contact-row ${c.id === s.selectedTargetId ? 'is-selected' : ''} ${c.isWaypoint ? 'is-nav' : ''}">
+      return `<div class="stn-contact-row ${c.id === s.selectedTargetId ? 'is-selected' : ''} ${c.isWaypoint ? 'is-nav' : ''}" data-contact-id="${c.id}" role="button" tabindex="0">
         <span class="stn-contact-dot ${iff}"></span>
         <span>${c.name || c.id} <em>${dom}</em></span>
         <span>${c.distanceM != null ? formatDistance(c.distanceM) : ''}</span>
@@ -568,6 +573,23 @@ export class StationOverlay {
     this._tao.list.innerHTML = rows.length
       ? rows.join('')
       : `<div class="stn-contact-row"><span></span><span>PICTURE CLEAR</span><span></span></div>`;
+    this._wireContactList(this._tao.list);
+  }
+
+  _wireContactList(listEl) {
+    if (!listEl || listEl.dataset.wired === '1') {
+      // Rebuilt innerHTML each frame — always rebind on the new nodes.
+    }
+    listEl.querySelectorAll('[data-contact-id]').forEach((row) => {
+      const id = row.getAttribute('data-contact-id');
+      if (!id || id.startsWith('nav:')) return;
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        this.onSelectContact?.(id);
+        if (ev.detail >= 2) this.onDesignate?.();
+      });
+    });
   }
 
   _updateLookout(s) {

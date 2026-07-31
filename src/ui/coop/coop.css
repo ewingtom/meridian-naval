@@ -1,24 +1,24 @@
-/* Sits in its own column to the RIGHT of the station side-panels, which all occupy
-   left:22px/top:110px/width:300px (.stn-helm-nav, .stn-radar-side). Sharing that exact
-   origin made the Task Force Net stack directly on top of the Helm nav readout and the
-   Radar contact column — the judge-flagged "HUD panels visually collide" bug. */
+/* Task Force Net — right column, directly under tac radar (comms lives on the left). */
 .coop-panel {
   position: absolute;
-  left: 340px;
-  top: 110px;
+  left: auto;
+  right: 18px;
+  top: 300px;
+  bottom: auto;
   transform: none;
-  width: min(260px, 38vw);
+  width: min(240px, 32vw);
   padding: 8px 10px 10px;
-  z-index: 24;
+  z-index: 22;
   pointer-events: auto;
-  transition: opacity 0.35s ease, transform 0.35s ease;
-  background: rgba(4, 10, 14, 0.55);
-  backdrop-filter: blur(6px);
+  transition: opacity 0.35s ease, transform 0.35s ease, top 0.25s ease, right 0.25s ease;
+  background: rgba(4, 10, 14, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(90, 200, 250, 0.22);
 }
 .coop-panel.coop-hidden {
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-8px);
+  transform: translateY(8px);
 }
 .coop-head {
   display: flex;

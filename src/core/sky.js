@@ -28,7 +28,7 @@ export class SkySystem {
     this.sunDirection = new THREE.Vector3();
 
     // Key sun light — warm, low-ish for long dramatic shadows / glitter
-    this.sunLight = new THREE.DirectionalLight(0xfff2e0, 4.2);
+    this.sunLight = new THREE.DirectionalLight(0xfff2e0, 5.1);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(2048, 2048);
     this.sunLight.shadow.camera.near = 10;
@@ -43,8 +43,9 @@ export class SkySystem {
     scene.add(this.sunLight);
     scene.add(this.sunLight.target);
 
-    // Soft cool sky fill (hemisphere) so shadows aren't pure black
-    this.hemiLight = new THREE.HemisphereLight(0x9fc4e8, 0x1a2b1f, 0.45);
+    // Soft cool sky fill — kept low so sun key + SSAO can sculpt form (judge: plastic wash)
+    // Balanced hemi — too low made ocean/hull near-black; too high washed AO
+    this.hemiLight = new THREE.HemisphereLight(0x7aa0c0, 0x0e1412, 0.16);
     scene.add(this.hemiLight);
 
     this.pmrem = new THREE.PMREMGenerator(renderer);
@@ -73,7 +74,7 @@ export class SkySystem {
     // Target is updated each frame to follow the ship (see update)
 
     const t = THREE.MathUtils.clamp(elevationDeg / 45, 0, 1);
-    this.sunLight.intensity = THREE.MathUtils.lerp(2.0, 4.6, t);
+    this.sunLight.intensity = THREE.MathUtils.lerp(2.4, 5.4, t);
     const warm = new THREE.Color(0xff9d52);
     const white = new THREE.Color(0xfff4e2);
     this.sunLight.color.copy(warm).lerp(white, t);

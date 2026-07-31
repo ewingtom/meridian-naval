@@ -35,6 +35,9 @@ const STATION_DEFS = {
     chaseLookAhead: 18,
     fov: 62,
     lookLimits: { yaw: Math.PI * 0.85, pitchMin: -0.55, pitchMax: 0.5 },
+    // Hide walkable BridgeInterior (layer 2) in chase — otherwise glass room + neon
+    // consoles poke through the Burke exterior and read as a graybox flying bridge.
+    hideLayers: [2],
     promptText: 'Press E to take the Helm',
     barText: 'HELM — Telegraph · Rudder · Course to waypoint · E Leave',
     accent: '#4de8ff',

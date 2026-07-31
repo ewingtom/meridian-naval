@@ -35,7 +35,9 @@ export class ShipAutopilot {
       const toDesired = new THREE.Vector3().subVectors(engageWorldPos, phys.position);
       const dist = toDesired.length();
       if (dist > 120) {
-        const desiredHeading = Math.atan2(-toDesired.x, -toDesired.z);
+        const desiredHeading = this.role === 'lead'
+          ? Math.atan2(toDesired.x, toDesired.z)
+          : Math.atan2(-toDesired.x, -toDesired.z);
         let diff = desiredHeading - phys.heading;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
@@ -69,7 +71,8 @@ export class ShipAutopilot {
       }
     } else {
       // 'lead' role — steer toward the mission waypoint, hold a cruising speed. Used
-      // when the Meridian herself has no human aboard at all (AI takes the whole ship).
+      // when the Meridian herself has no human at the HELM seat (player on weapons/radar/
+      // walk, or an empty Meridian in multiplayer).
       const target = waypoint || phys.position.clone().addScaledVector(phys.forward, 100);
       const toTarget = new THREE.Vector3().subVectors(target, phys.position);
       if (toTarget.lengthSq() > 400) {
@@ -78,9 +81,9 @@ export class ShipAutopilot {
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
         rudder = THREE.MathUtils.clamp(diff * 1.1, -1, 1);
-        throttle = 0.55;
+        throttle = 0.7;
       } else {
-        throttle = 0.15; rudder = 0;
+        throttle = 0.2; rudder = 0;
       }
     }
     this.ship.setCommand(throttle, rudder);

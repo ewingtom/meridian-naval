@@ -1,12 +1,24 @@
 import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
 import { Explosion } from './Explosion.js';
+import { LaunchEffect } from './LaunchEffect.js';
 
 const PLAYER_WEAPONS = {
   gun: { label: '130mm Deck Gun', ammoKey: null, cooldown: 0.7, projType: 'playerShell' },
-  missile: { label: 'Anti-Ship Missile', ammoKey: 'missile', maxAmmo: 16, cooldown: 1.6, projType: 'playerMissile' },
+  missile: { label: 'Guided Missile', ammoKey: 'missile', maxAmmo: 16, cooldown: 1.6, projType: 'playerMissile' },
   torpedo: { label: 'ASROC Torpedo', ammoKey: 'torpedo', maxAmmo: 8, cooldown: 2.4, projType: 'playerTorpedo' },
   drone: { label: 'Recon Drone', ammoKey: 'drone', maxAmmo: 2, cooldown: 3, projType: 'drone' },
+};
+
+const LAUNCH_FX = {
+  playerShell: { scale: 0.45, color: 0xffe08a },
+  playerMissile: { scale: 1.35, color: 0xffc070 },
+  playerTorpedo: { scale: 1.15, color: 0xa8d8e8 },
+  enemyShell: { scale: 0.4, color: 0xff8a5a },
+  enemyMissile: { scale: 1.25, color: 0xff7040 },
+  airMissile: { scale: 1.05, color: 0xff7040 },
+  torpedo: { scale: 0.9, color: 0x88c0c8, underwater: true },
+  ciwsRound: { scale: 0.25, color: 0xffe98a },
 };
 
 export class WeaponsSystem {
@@ -14,6 +26,7 @@ export class WeaponsSystem {
     this.scene = scene;
     this.projectiles = [];
     this.explosions = [];
+    this.launchFx = [];
     this.cb = callbacks; // { onFire, onExplosion, onHit(entity,dmg), onShipHit(ship,dmg) }
 
     this.ammo = { missile: 16, torpedo: 8, drone: 2 };
@@ -48,7 +61,19 @@ export class WeaponsSystem {
     const spoofed = Math.random() < 0.65;
     if (spoofed) {
       threat.dead = true;
-      this.explode(threat.position.clone(), { scale: 0.35, decoy: true });
+      this.explode(threat.position.clone(), { scale: 0.45, decoy: true });
+      // Burst of decoy blooms along the break track
+      const dir = threat.velocity?.clone?.() || new THREE.Vector3(0, 1, 0);
+      if (dir.lengthSq() < 0.01) dir.set(0, 1, 0);
+      dir.normalize();
+      for (let i = 0; i < 3; i++) {
+        const pos = threat.position.clone().addScaledVector(dir, -4 - i * 5)
+          .add(new THREE.Vector3((Math.random() - 0.5) * 6, Math.random() * 4, (Math.random() - 0.5) * 6));
+        this.launchFx.push(new LaunchEffect(this.scene, pos, {
+          scale: 0.7 + Math.random() * 0.4,
+          color: 0xffe0a0,
+        }));
+      }
     }
     this.cb.onChaff?.(ship, spoofed);
     return true;
@@ -82,6 +107,16 @@ export class WeaponsSystem {
   spawn(type, fromPos, targetPos, opts = {}) {
     const p = new Projectile(type, fromPos, targetPos, { ...opts, scene: this.scene });
     this.projectiles.push(p);
+
+    const fx = LAUNCH_FX[type];
+    if (fx) {
+      const loft = new THREE.Vector3().subVectors(targetPos, fromPos);
+      if (loft.lengthSq() < 0.01) loft.set(0, 1, 0);
+      this.launchFx.push(new LaunchEffect(this.scene, fromPos.clone(), {
+        ...fx,
+        loft,
+      }));
+    }
     return p;
   }
 
@@ -137,6 +172,19 @@ export class WeaponsSystem {
       if (p.dead) continue;
       p.update(dt, camera);
 
+      // ASROC / torpedo water entry splash
+      if (p.didSplash && p.splashPos) {
+        this.explode(p.splashPos.clone(), { scale: 0.85, underwater: true });
+        this.launchFx.push(new LaunchEffect(this.scene, p.splashPos.clone(), {
+          scale: 1.1,
+          color: 0xc8f4ff,
+          underwater: true,
+          loft: new THREE.Vector3(0, 1, 0),
+        }));
+        p.didSplash = false;
+        p.splashPos = null;
+      }
+
       // CIWS rounds intercept the projectile they were fired at
       if (p.type === 'ciwsRound' && p.targetEntity && !p.targetEntity.dead) {
         if (p.position.distanceTo(p.targetEntity.position) < 6) {
@@ -157,6 +205,8 @@ export class WeaponsSystem {
         for (const e of enemies) {
           if (!e.alive || e.destroyed) continue;
           if (e.domain === 'SUBSURFACE' && p.type !== 'playerTorpedo') continue;
+          // Missiles/shells shouldn't strike subs; air targets OK for missile/gun
+          if (e.domain === 'AIR' && p.type === 'playerTorpedo') continue;
           if (p.position.distanceTo(e.position) < p.cfg.radius) {
             e.takeDamage(p.cfg.damage);
             this.cb.onHit?.(e, p.cfg.damage);
@@ -188,6 +238,12 @@ export class WeaponsSystem {
     for (const ex of this.explosions) ex.update(dt);
     this.explosions = this.explosions.filter((ex) => {
       if (ex.dead) { ex.dispose(); return false; }
+      return true;
+    });
+
+    for (const fx of this.launchFx) fx.update(dt);
+    this.launchFx = this.launchFx.filter((fx) => {
+      if (fx.dead) { fx.dispose(); return false; }
       return true;
     });
   }

@@ -165,12 +165,13 @@
 /* ---- WEAPONS ---- */
 .stn-weapons-rack {
   position: absolute;
-  left: 22px;
+  left: 18px;
   bottom: 28px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: 250px;
+  z-index: 21;
 }
 .stn-weapon-slot {
   display: grid;
@@ -214,10 +215,11 @@
 }
 .stn-target-panel {
   position: absolute;
-  right: 22px;
+  right: 18px;
   bottom: 28px;
   width: 280px;
   padding: 14px 16px;
+  z-index: 21;
 }
 .stn-target-name {
   font-family: var(--font-display);
@@ -298,11 +300,16 @@
   letter-spacing: 0.06em;
 }
 .stn-inbound {
+  /* Top-center under objective — right column is tac radar + Task Force Net. */
   position: absolute;
-  top: 110px;
-  right: 22px;
-  width: 260px;
-  padding: 12px 14px;
+  left: 50%;
+  top: 78px;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(420px, 70vw);
+  padding: 10px 14px;
+  z-index: 20;
+  text-align: center;
 }
 .stn-inbound-body {
   margin-top: 8px;
@@ -318,6 +325,8 @@
   gap: 10px;
   padding: 4px 0;
   border-bottom: 1px solid rgba(255,255,255,0.06);
+  max-width: 360px;
+  margin: 0 auto;
 }
 .stn-weapon-role {
   font-family: var(--font-mono);

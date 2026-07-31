@@ -353,3 +353,71 @@
   .shud-bottom-left, .shud-bottom-right { width: 180px; }
   .shud-compass { width: 80vw; }
 }
+
+/* --------------------------------------------------------------------------
+   Seat-aware HUD layout — hide ShipHUD clusters that the active station already
+   owns so panels never stack on the same corner.
+   dataset.seat is set on #ui-root from PlayerController.onStationChange.
+   -------------------------------------------------------------------------- */
+
+/* WEAPONS owns bottom-left (rack) + bottom-right (target) — drop ShipHUD twins. */
+#ui-root[data-seat="WEAPONS"] .shud-bottom-left,
+#ui-root[data-seat="WEAPONS"] .shud-bottom-right {
+  opacity: 0;
+  pointer-events: none !important;
+  visibility: hidden;
+}
+/* Comms would sit on the weapons rack — park it mid-left above the rack. */
+#ui-root[data-seat="WEAPONS"] .comms-log {
+  left: 18px;
+  bottom: auto;
+  top: 110px;
+  width: min(300px, 28vw);
+}
+/* Coop stays under radar; inbound is top-center (stations.css). */
+#ui-root[data-seat="WEAPONS"] .coop-panel {
+  top: 300px;
+  right: 18px;
+}
+
+/* HELM owns bottom-center gauges + left nav — hide redundant speed block. */
+#ui-root[data-seat="HELM"] .shud-speed-block {
+  display: none;
+}
+#ui-root[data-seat="HELM"] .comms-log {
+  left: 320px; /* clear of helm nav (280px + gutter) */
+  bottom: 200px;
+}
+#ui-root[data-seat="HELM"] .coop-panel {
+  top: 300px;
+  right: 18px;
+}
+
+/* RADAR owns left contact column + enlarged right radar — keep coop left of radar. */
+#ui-root[data-seat="RADAR"] .coop-panel,
+#ui-root[data-seat="SONAR"] .coop-panel,
+#ui-root[data-seat="TAO"] .coop-panel {
+  right: auto;
+  left: 340px;
+  top: 110px;
+  width: min(220px, 26vw);
+}
+#ui-root[data-seat="RADAR"] .comms-log,
+#ui-root[data-seat="SONAR"] .comms-log,
+#ui-root[data-seat="TAO"] .comms-log {
+  left: 340px;
+  bottom: 28px;
+  width: min(280px, 28vw);
+}
+
+/* LOOKOUT: immersive — tuck secondary panels. */
+#ui-root[data-seat="LOOKOUT"] .coop-panel {
+  opacity: 0.55;
+  top: auto;
+  bottom: 28px;
+  right: 18px;
+}
+#ui-root[data-seat="LOOKOUT"] .comms-log {
+  left: 18px;
+  bottom: 28px;
+}

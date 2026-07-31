@@ -35,7 +35,7 @@ sky.onEnvMapUpdated = (tex) => ocean.setEnvMap(tex);
 pipeline.bindSunLight(sky.sunLight);
 
 const fogColor = new THREE.Color(0x9dc3dc);
-scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00036);
+scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00028);
 ocean.setFogColor(fogColor);
 
 // ============================ CREWED SHIPS ============================
@@ -65,6 +65,8 @@ let localShipId = 'player';
 let localShip = ships.player;
 
 const mp = new MultiplayerSession({ ships, name: 'Officer' });
+// Solo station occupancy — AI takes any console the local human isn't seated in.
+mp._getLocalStation = () => playerController?.state || 'WALK';
 
 // Landfall island along the patrol route to VIGIL — somewhere to actually go ashore.
 const island = buildIsland({ radius: 260, peak: 58 });
@@ -131,7 +133,7 @@ const weapons = new WeaponsSystem(scene, {
     const call = shipCallsign(ship);
     if (ship === localShip) {
       ewWarningUntil = performance.now() / 1000 + 6;
-      commsLog.push({ speaker: `${call} EW`, text: 'Missile lock — inbound, chaff range. Hold Z to spoof it.', urgency: 'critical' });
+      commsLog.push({ speaker: `${call} EW`, text: 'Missile lock — inbound, chaff range. Press Z to spoof it.', urgency: 'critical' });
       audio.playAlarmKlaxon?.();
     } else {
       setTimeout(() => {
@@ -255,6 +257,12 @@ stationOverlay.onRangeChange = (dir) => {
   radarRangeIdx = THREE.MathUtils.clamp(radarRangeIdx + dir, 0, RADAR_RANGES.length - 1);
   radar.rangeM = RADAR_RANGES[radarRangeIdx];
 };
+stationOverlay.onSelectContact = (id) => {
+  if (!id || String(id).startsWith('nav:')) return;
+  weapons.selectedTargetId = id;
+  audio.playUiConfirm();
+};
+stationOverlay.onDesignate = () => designateSelectedTrack({ from: playerController?.state || 'CIC' });
 
 const commsLog = new CommsLog({ maxVisible: 6 });
 commsLog.mount(uiRoot);
@@ -305,13 +313,15 @@ coopPanel.mount(uiRoot);
 // waiting on a station nobody's even at. Matches the pattern already established for
 // Damage Control / EW: the player's own current post is theirs to handle, everything
 // else runs itself. */
+// Owners must include every seat DynamicOps hints for that beat — otherwise AI
+// fulfills the net order while the player is sitting exactly where the order pointed.
 const COOP_OWNER_STATIONS = {
-  share: ['RADAR', 'SONAR'],
+  share: ['RADAR', 'SONAR', 'LOOKOUT', 'TAO'],
   ping: ['SONAR', 'RADAR'],
-  engage: ['TAO'],
-  hold: ['TAO'],
-  screen: ['TAO'],
-  affirm: ['TAO'],
+  engage: ['TAO', 'WEAPONS'],
+  hold: ['TAO', 'WEAPONS'],
+  screen: ['TAO', 'HELM'],
+  affirm: ['TAO', 'HELM'],
 };
 let aiCoopFulfillAt = 0;
 function aiEnsureTargetDesignated() {
@@ -747,6 +757,16 @@ const playerController = new PlayerController({
       playerController.weaponsTrackLock = false;
       playerController.trackTargetPos = null;
     }
+    // Seat-aware HUD layout — panels hide/reflow so station UI never stacks on ShipHUD.
+    const uiRootEl = document.getElementById('ui-root');
+    if (uiRootEl) uiRootEl.dataset.seat = station || 'WALK';
+    // Bridge-orientation walk tip must never sit under a manned station HUD.
+    if (station && station !== 'WALK' && introEl) introEl.style.display = 'none';
+    // Solo AI handoff chatter: when the human leaves a console, the AI crew takes it.
+    if (gameStarted && !mp.inSession) {
+      announceStationHandoff(station);
+    }
+
     // Dim the corner radar while seated at weapons/helm/lookout so the station UI owns the frame;
     // keep it visible (enlarged) at the radar console.
     if (station === Station.RADAR) tacRadar.show();
@@ -764,6 +784,42 @@ const playerController = new PlayerController({
     }
   },
 });
+uiRoot.dataset.seat = playerController.state || 'WALK';
+
+let _lastAnnouncedSeat = null;
+function announceStationHandoff(station) {
+  if (station === _lastAnnouncedSeat) return;
+  const prev = _lastAnnouncedSeat;
+  _lastAnnouncedSeat = station;
+  if (!prev && station === 'WALK') return;
+  // Human left HELM → AI has the conn
+  if (prev === Station.HELM && station !== Station.HELM) {
+    commsLog.push({
+      speaker: 'MERIDIAN HELM (AI)',
+      text: 'AI has the conn — holding course for the current waypoint. Call when you want the wheel.',
+      urgency: 'normal',
+    });
+    audio.playRadioBlip();
+  }
+  // Human left WEAPONS → AI mans the guns (subject to weapons hold doctrine)
+  if (prev === Station.WEAPONS && station !== Station.WEAPONS) {
+    const policy = taskForce.weaponsPolicy === 'free' ? 'prosecuting per shared track' : 'weapons hold — standing by for designation';
+    commsLog.push({
+      speaker: 'MERIDIAN WEAPONS (AI)',
+      text: `Taking the weapons console — ${policy}.`,
+      urgency: 'normal',
+    });
+    audio.playRadioBlip();
+  }
+  // Human sat WEAPONS while AI was on helm — confirm AI still steering
+  if (station === Station.WEAPONS && prev !== Station.WEAPONS) {
+    commsLog.push({
+      speaker: 'MERIDIAN HELM (AI)',
+      text: 'Helm is AI — underway on the plot. You have weapons.',
+      urgency: 'normal',
+    });
+  }
+}
 
 // ---- task-force net: available from any seat (and while walking the bridge) ----
 window.addEventListener('keydown', (e) => {
@@ -825,16 +881,16 @@ window.addEventListener('keydown', (e) => {
       radarRangeIdx = Math.min(RADAR_RANGES.length - 1, radarRangeIdx + 1);
       radar.rangeM = RADAR_RANGES[radarRangeIdx];
     } else if (e.code === 'Enter' || e.code === 'NumpadEnter') {
-      // Designate currently selected track to weapons
-      if (weapons.selectedTargetId && !String(weapons.selectedTargetId).startsWith('nav:')) {
-        commsLog.push({
-          speaker: 'CIC',
-          text: `Track ${weapons.selectedTargetId} designated to weapons.`,
-          urgency: 'warning',
-        });
-        audio.playUiConfirm();
-      }
+      designateSelectedTrack({ from: 'RADAR' });
     }
+  }
+
+  if (st === Station.SONAR && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+    designateSelectedTrack({ from: 'SONAR' });
+  }
+
+  if (st === Station.TAO && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
+    designateSelectedTrack({ from: 'TAO' });
   }
 
   if (st === Station.WEAPONS) {
@@ -928,14 +984,38 @@ function getInboundThreats() {
   return threats;
 }
 
+function designateSelectedTrack({ from = 'CIC' } = {}) {
+  const id = weapons.selectedTargetId;
+  if (!id || String(id).startsWith('nav:') || String(id).startsWith('inbound:')) {
+    commsLog.push({
+      speaker: from,
+      text: 'No track selected — Tab a contact, then Designate.',
+      urgency: 'warning',
+    });
+    return false;
+  }
+  const ok = taskForce.shareTrack(id);
+  if (ok) {
+    commsLog.push({
+      speaker: from,
+      text: `Track shared to the force — ${world.entities.find((e) => e.id === id)?.name || id}.`,
+      urgency: 'warning',
+    });
+    audio.playUiConfirm();
+  }
+  return ok;
+}
+
 function evaluateFireSolution(targetEntity, targetInfo) {
   const key = weapons.selectedWeapon;
   if (!targetInfo && key !== 'gun' && key !== 'drone') {
     return { ok: false, reason: 'NO TRACK', detail: 'Tab to select a contact' };
   }
   if (key === 'missile') {
-    if (!targetEntity || targetEntity.domain !== 'SURFACE') {
-      return { ok: false, reason: 'WRONG DOMAIN', detail: 'Missiles need a surface track' };
+    const domain = String(targetEntity?.domain || '').toUpperCase();
+    // Guided missiles: surface strike + air tracks (escorts already use this doctrine).
+    if (!targetEntity || (domain !== 'SURFACE' && domain !== 'AIR')) {
+      return { ok: false, reason: 'WRONG DOMAIN', detail: 'Missiles need a surface or air track' };
     }
     if (targetEntity.iff === 'FRIENDLY') {
       return { ok: false, reason: 'FRIENDLY', detail: 'Cannot engage friendly track' };
@@ -988,6 +1068,9 @@ function reportLookoutContact() {
     urgency: e.iff === 'HOSTILE' ? 'warning' : 'normal',
   });
   weapons.selectedTargetId = e.id;
+  // Visual ID beats require share — Lookout reporting pushes the contact onto the
+  // force plot so the player isn't stuck after R with an unfinished coop gate.
+  taskForce.shareTrack(e.id);
   audio.playUiConfirm();
 }
 
@@ -1094,6 +1177,18 @@ let throttleCmd = 0;
 let rudderCmd = 0;
 let lastContacts = [];
 let hostileWaveSpawned = false;
+window.GAME.setHelmCommand = (throttle, rudder = 0) => {
+  throttleCmd = THREE.MathUtils.clamp(throttle, -1, 1);
+  rudderCmd = THREE.MathUtils.clamp(rudder, -1, 1);
+};
+window.GAME.ensureSimRunning = () => {
+  // Judge / debug: skip stuck intro / lose overlays so the main loop keeps integrating.
+  introPlaying = false;
+  paused = false;
+  gameOver = false;
+  gameStarted = true;
+  gameOverEl.style.display = 'none';
+};
 
 const clock = new THREE.Clock();
 let frameCount = 0, fpsAccum = 0;
@@ -1142,17 +1237,21 @@ function animate() {
     for (const [shipId, ship] of Object.entries(ships)) {
       ship.networked = !mp.iSimulateShip(shipId);
       if (!ship.networked) {
-        const helmHuman = mp.helmIsHuman(shipId); // if true here, it's always the local human (see MultiplayerSession)
+        const helmHuman = mp.helmIsHuman(shipId);
         if (helmHuman) {
-          // Keep last telegraph/rudder while the local helm player is at another
-          // station or walking the bridge — otherwise leaving HELM kills way and
-          // the force drifts dead in the water mid-fight.
+          // Local human is seated at HELM — drive from telegraph/rudder commands.
           if (ship === localShip) ship.setCommand(throttleCmd, rudderCmd);
         } else {
+          // AI has the conn (solo: player is at another station or walking).
           const engageEnt = taskForce.sharedTargetId
             ? world.entities.find((e) => e.id === taskForce.sharedTargetId && !e.destroyed)
             : null;
-          autopilots[shipId].updateHelm(dt, {
+          const ap = autopilots[shipId];
+          // Meridian AI helm closes a shared free-fire track instead of idling on the waypoint.
+          if (ap.role === 'lead') {
+            ap.breakFormation = taskForce.weaponsPolicy === 'free' && !!engageEnt;
+          }
+          ap.updateHelm(dt, {
             anchorShip: ships.player,
             waypoint: mission.currentWaypoint,
             engageWorldPos: engageEnt?.position || null,

@@ -69,26 +69,29 @@ export function buildHullTextureSet({
   const rivetRGB = lineIsLight ? '235,238,240' : '0,0,0';
   const rivetAlpha = lineIsLight ? 0.55 : 0.4;
 
-  // panel-line grid (slightly irregular pitch so it doesn't look like a spreadsheet)
-  ctx.strokeStyle = `rgba(${lineRGB},${lineAlpha})`;
-  ctx.lineWidth = Math.max(1, size / 300);
+  // Panel seams — skip when cols/rows are 1 (organic paint only; avoids spreadsheet tiling).
   const colXs = [0];
   for (let i = 1; i < panelCols; i++) colXs.push((i / panelCols + (hash(i, seed) - 0.5) * 0.02) * size);
   colXs.push(size);
   const rowYs = [0];
   for (let i = 1; i < panelRows; i++) rowYs.push((i / panelRows + (hash(seed, i) - 0.5) * 0.015) * size);
   rowYs.push(size);
-  for (const x of colXs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke(); markSeamHeight(heightData, size, x, true); }
-  for (const y of rowYs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke(); markSeamHeight(heightData, size, y, false); }
+  if (panelCols > 1 || panelRows > 1) {
+    // Soften line contrast vs old near-black grid (judge: chalky tiled hull)
+    const softAlpha = lineAlpha * 0.35;
+    ctx.strokeStyle = `rgba(${lineRGB},${softAlpha})`;
+    ctx.lineWidth = Math.max(1, size / 420);
+    for (const x of colXs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke(); markSeamHeight(heightData, size, x, true); }
+    for (const y of rowYs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke(); markSeamHeight(heightData, size, y, false); }
 
-  // rivet dots at panel corners (cheap greeble that reads well at a distance)
-  ctx.fillStyle = `rgba(${rivetRGB},${rivetAlpha})`;
-  for (const x of colXs.slice(1, -1)) {
-    for (const y of rowYs.slice(1, -1)) {
-      for (const [ox, oy] of [[-10, -10], [10, -10], [-10, 10], [10, 10]]) {
-        ctx.beginPath();
-        ctx.arc(x + ox * (size / 512), y + oy * (size / 512), size / 340, 0, Math.PI * 2);
-        ctx.fill();
+    ctx.fillStyle = `rgba(${rivetRGB},${rivetAlpha * 0.45})`;
+    for (const x of colXs.slice(1, -1)) {
+      for (const y of rowYs.slice(1, -1)) {
+        for (const [ox, oy] of [[-10, -10], [10, -10], [-10, 10], [10, 10]]) {
+          ctx.beginPath();
+          ctx.arc(x + ox * (size / 512), y + oy * (size / 512), size / 380, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
   }

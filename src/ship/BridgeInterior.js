@@ -42,25 +42,23 @@ export function buildBridgeInterior({ lite = false } = {}) {
   // walls/floor as if they were outdoors — reusing the same panel-line texture
   // generator built for exterior hulls (ProceduralTextures.js) fixes the flatness, and
   // a low envMapIntensity stops the interior from mirroring the sky like it's outside.
-  const wallTex = getSharedHullTextures('bridgeWall', {
-    size: 512, baseColor: [0.43, 0.46, 0.49], panelCols: 5, panelRows: 6, rustColor: [0.32, 0.28, 0.24], rustAmount: 0.06, seed: 11,
+  const wallTex = getSharedHullTextures('bridgeWall_v2', {
+    size: 1024, baseColor: [0.28, 0.30, 0.33], panelCols: 3, panelRows: 2, rustColor: [0.22, 0.18, 0.14], rustAmount: 0.06, seed: 11,
   });
-  const floorTexSet = getSharedHullTextures('bridgeFloor', {
-    size: 512, baseColor: [0.1, 0.11, 0.13], panelCols: 4, panelRows: 7, rustColor: [0.08, 0.07, 0.06], rustAmount: 0.1, seed: 13,
+  const floorTexSet = getSharedHullTextures('bridgeFloor_v3', {
+    size: 1024, baseColor: [0.06, 0.065, 0.07], panelCols: 1, panelRows: 1, rustColor: [0.04, 0.035, 0.03], rustAmount: 0.22, seed: 13,
   });
-  const cloneTex = (t, rx, ry) => { const c = t.clone(); c.needsUpdate = true; c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(rx, ry); return c; };
+  const cloneTex = (t, rx, ry) => { const c = t.clone(); c.needsUpdate = true; c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(rx, ry); c.anisotropy = 8; return c; };
   const wallMat = new THREE.MeshStandardMaterial({
-    // white — the canvas `map` already encodes the desired base color; a colored
-    // material.color here would multiply on top and double-darken the texture.
-    color: 0xffffff, roughness: 0.78, metalness: 0.18, envMapIntensity: 0.12,
-    map: cloneTex(wallTex.map, 4, 1.4), normalMap: cloneTex(wallTex.normalMap, 4, 1.4), roughnessMap: cloneTex(wallTex.roughnessMap, 4, 1.4),
+    color: 0xffffff, roughness: 0.9, metalness: 0.06, envMapIntensity: 0.04,
+    map: cloneTex(wallTex.map, 3.2, 1.2), normalMap: cloneTex(wallTex.normalMap, 3.2, 1.2), roughnessMap: cloneTex(wallTex.roughnessMap, 3.2, 1.2),
     normalScale: new THREE.Vector2(0.4, 0.4),
   });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.55, metalness: 0.4, envMapIntensity: 0.1 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x1a1e22, roughness: 0.52, metalness: 0.58, envMapIntensity: 0.12 });
   const floorMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, roughness: 0.88, metalness: 0.12, envMapIntensity: 0.08,
-    map: cloneTex(floorTexSet.map, 3.5, 4), normalMap: cloneTex(floorTexSet.normalMap, 3.5, 4), roughnessMap: cloneTex(floorTexSet.roughnessMap, 3.5, 4),
-    normalScale: new THREE.Vector2(0.5, 0.5),
+    color: 0xffffff, roughness: 0.96, metalness: 0.04, envMapIntensity: 0.03,
+    map: cloneTex(floorTexSet.map, 3.2, 3.8), normalMap: cloneTex(floorTexSet.normalMap, 3.2, 3.8), roughnessMap: cloneTex(floorTexSet.roughnessMap, 3.2, 3.8),
+    normalScale: new THREE.Vector2(0.55, 0.55),
   });
   // Transmission glass is expensive; hero bridge only. Escorts keep cheap glass.
   const glassMat = lite
@@ -108,19 +106,25 @@ export function buildBridgeInterior({ lite = false } = {}) {
     strip.position.set(stripX, ceilY - 0.05, 14.5);
     group.add(strip);
     if (!lite) {
-      const fill = new THREE.PointLight(0xd7ebf8, 7.2, 18, 1.45);
+      const fill = new THREE.PointLight(0xd7ebf8, 5.4, 16, 1.55);
       fill.position.set(stripX, ceilY - 0.55, 14.5);
       group.add(fill);
     }
   }
-  const bridgeAmb = new THREE.AmbientLight(0x6a8498, lite ? 0.85 : 0.55);
+  const bridgeAmb = new THREE.AmbientLight(0x4a6070, lite ? 0.55 : 0.28);
   group.add(bridgeAmb);
   if (!lite) {
-    const windowFill = new THREE.DirectionalLight(0xcfe8ff, 1.15);
+    const windowFill = new THREE.DirectionalLight(0xcfe8ff, 1.55);
     windowFill.position.set(0, floorY + 3, maxZ + 8);
     windowFill.target.position.set(0, floorY + 1.2, 14);
     group.add(windowFill);
     group.add(windowFill.target);
+    // Soft under-console contact pools — fake AO without relying on SSAO alone
+    for (const [lx, lz] of [[0, 14.2], [-4.2, 12.8], [4.6, 12.8]]) {
+      const pool = new THREE.PointLight(0x1a2830, 0.55, 6.5, 2.2);
+      pool.position.set(lx, floorY + 0.35, lz);
+      group.add(pool);
+    }
   }
 
   // ---- banded walls: solid kick, window strip, solid header ----
@@ -220,11 +224,11 @@ export function buildBridgeInterior({ lite = false } = {}) {
   }
   // Deck runner lights along the center aisle (soft emissive strips).
   const runnerMat = new THREE.MeshStandardMaterial({
-    color: 0x0a2a32, emissive: 0x2a9bb0, emissiveIntensity: 0.22, roughness: 0.55, metalness: 0.1,
+    color: 0x0a1a1e, emissive: 0x1a6070, emissiveIntensity: 0.08, roughness: 0.7, metalness: 0.15,
   });
   for (let i = 0; i < 4; i++) {
-    const runner = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.02, 1.4), runnerMat);
-    runner.position.set(0, floorY + 0.015, minZ + 4 + i * 4.2);
+    const runner = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.015, 1.2), runnerMat);
+    runner.position.set(0, floorY + 0.012, minZ + 4 + i * 4.2);
     group.add(runner);
   }
 
@@ -515,7 +519,10 @@ export function buildBridgeInterior({ lite = false } = {}) {
   // racks, cable trays, fittings, the loaded console/chair GLB materials once they
   // swap in) — same fix as wallMat/floorMat above, applied broadly instead of having
   // to touch each material declaration individually.
+  // Entire interior on layer 2 so HELM/WEAPONS chase cams can hide it (otherwise the
+  // glass room + neon consoles poke through the Burke exterior as a flying bridge).
   group.traverse((o) => {
+    o.layers.set(2);
     if (!o.isMesh) return;
     o.castShadow = o.receiveShadow = true;
     const mats = Array.isArray(o.material) ? o.material : [o.material];

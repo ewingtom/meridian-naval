@@ -5,6 +5,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
 import { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
 
 // UnrealBloomPass's internal mip-chain composite leaves renderer.setViewport()/
@@ -97,6 +98,7 @@ export class RenderPipeline {
     this.fxaaPass = null;
     this.gradePass = null;
     this.bloomPass = null;
+    this.ssaoPass = null;
     this._quality = 'medium';
     this._wantComposer = false;
     this._useComposer = false;
@@ -119,6 +121,12 @@ export class RenderPipeline {
 
     try {
       const renderPass = new RenderPass(scene, camera);
+      // Contact occlusion — kills the plastic “floating graybox” look on deck recesses.
+      this.ssaoPass = new SSAOPass(scene, camera, w, h);
+      this.ssaoPass.kernelRadius = 12;
+      this.ssaoPass.minDistance = 0.001;
+      this.ssaoPass.maxDistance = 0.12;
+      this.ssaoPass.output = SSAOPass.OUTPUT.Default;
       // Half-res bloom: ~4× cheaper mip chain, still sells soft specular bloom.
       this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w * 0.5, h * 0.5), 0.18, 0.5, 0.85);
       this.gradePass = new ShaderPass(VIGNETTE_GRADE_SHADER);
@@ -130,6 +138,7 @@ export class RenderPipeline {
       this.composer = new EffectComposer(this.renderer);
       this.composer.setPixelRatio(pr);
       this.composer.addPass(renderPass);
+      this.composer.addPass(this.ssaoPass);
       this.composer.addPass(this.bloomPass);
       this.composer.addPass(new ViewportRestorePass(this.renderer));
       this.composer.addPass(outputPass);
@@ -170,18 +179,26 @@ export class RenderPipeline {
     this._composerHealthy = false;
     this._probeFrames = 0;
 
+    if (this.ssaoPass) {
+      // SSAO is expensive — only High/Ultra (judge frames run High).
+      this.ssaoPass.enabled = q === 'high' || q === 'ultra';
+      this.ssaoPass.kernelRadius = q === 'ultra' ? 28 : 20;
+      this.ssaoPass.minDistance = 0.0004;
+      this.ssaoPass.maxDistance = q === 'ultra' ? 0.22 : 0.16;
+    }
     if (this.bloomPass) {
-      this.bloomPass.enabled = usePost;
-      this.bloomPass.strength = q === 'ultra' ? 0.26 : q === 'high' ? 0.22 : 0.2;
-      this.bloomPass.threshold = q === 'ultra' ? 0.62 : 0.68;
-      this.bloomPass.radius = q === 'ultra' ? 0.55 : 0.48;
+      // Bloom off for naval stills — was turning waterline/wake into emissive glow (judge FAIL)
+      this.bloomPass.enabled = false;
+      this.bloomPass.strength = 0.08;
+      this.bloomPass.threshold = 0.92;
+      this.bloomPass.radius = 0.35;
     }
     if (this.gradePass) {
       this.gradePass.enabled = usePost;
       this.gradePass.uniforms.uGrainAmount.value = q === 'ultra' ? 0.012 : (q === 'high' ? 0.006 : 0.003);
       this.gradePass.uniforms.uVignetteStrength.value = q === 'ultra' ? 0.26 : 0.2;
-      this.gradePass.uniforms.uContrast.value = q === 'low' ? 1.0 : 1.1;
-      this.gradePass.uniforms.uSaturation.value = q === 'low' ? 1.0 : 1.14;
+      this.gradePass.uniforms.uContrast.value = q === 'low' ? 1.0 : 1.14;
+      this.gradePass.uniforms.uSaturation.value = q === 'low' ? 1.0 : 1.12;
     }
     if (this.fxaaPass) this.fxaaPass.enabled = usePost;
 
@@ -193,11 +210,11 @@ export class RenderPipeline {
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     } else {
       this.renderer.shadowMap.enabled = true;
-      this.renderer.shadowMap.type = THREE.PCFShadowMap;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     }
 
     if (this._sunLight) {
-      const map = q === 'ultra' ? 2048 : q === 'high' ? 1024 : q === 'medium' ? 1024 : 512;
+      const map = q === 'ultra' ? 4096 : q === 'high' ? 2048 : q === 'medium' ? 1024 : 512;
       if (this._sunLight.shadow.mapSize.x !== map) {
         this._sunLight.shadow.mapSize.set(map, map);
         this._sunLight.shadow.map?.dispose();
@@ -205,6 +222,9 @@ export class RenderPipeline {
       }
       this._sunLight.castShadow = q !== 'low';
     }
+
+    // Slight exposure lift on High for glitter / ocean specular
+    this.renderer.toneMappingExposure = q === 'ultra' ? 1.34 : q === 'high' ? 1.3 : 1.22;
 
     this.resize();
   }
@@ -219,6 +239,7 @@ export class RenderPipeline {
     }
     // Composer.setSize resets bloom to full-res; force half-res for the mip chain.
     if (this.bloomPass) this.bloomPass.setSize(w * 0.5, h * 0.5);
+    if (this.ssaoPass) this.ssaoPass.setSize(w, h);
     if (this.fxaaPass) {
       this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
     }

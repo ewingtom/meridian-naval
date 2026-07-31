@@ -6,9 +6,17 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
 #scene { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
 #ui-root { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 #ui-root * { pointer-events: auto; }
-/* Station overlays are display-only — never steal pointer lock clicks. */
+/* Station overlays are mostly display-only — never steal pointer lock clicks.
+   Interactive console controls re-enable pointer events explicitly. */
 #ui-root .station-overlay,
 #ui-root .station-overlay * { pointer-events: none !important; }
+#ui-root .station-overlay .stn-notch,
+#ui-root .station-overlay .stn-filter-row button,
+#ui-root .station-overlay .stn-range-row button,
+#ui-root .station-overlay .stn-contact-row[data-contact-id] {
+  pointer-events: auto !important;
+  cursor: pointer;
+}
 body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #dfe8ee; }
 
 /* ==========================================================================

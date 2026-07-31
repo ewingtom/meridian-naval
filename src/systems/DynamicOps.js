@@ -271,6 +271,19 @@ export class DynamicOps {
   }
 
   _stationChatter(playerPos) {
+    // Never overwrite an active DynamicOps beat — chatter was stealing pendingHint
+    // mid-order (e.g. ping require replaced by engage), which made stations feel broken.
+    if (this._activeOrder) {
+      if (Math.random() < 0.35) {
+        this.onComms({
+          speaker: 'CIC',
+          text: `Still working the order — ${this._activeOrder.text}`,
+          urgency: 'normal',
+        });
+      }
+      return;
+    }
+
     const escorts = [this.ships.escort1, this.ships.escort2].filter(Boolean);
     const hostiles = this.world.hostiles;
     const inboundish = hostiles.find((h) => h.position.distanceTo(playerPos) < 2800);

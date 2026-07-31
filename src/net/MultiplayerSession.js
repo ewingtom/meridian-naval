@@ -15,11 +15,10 @@ export class MultiplayerSession {
     this.net = null;
     this.active = false;
     this._sendAccum = 0;
-    // Solo play has no roster at all — treat the Meridian's Helm/Weapons as always
-    // locally human-assigned (matches original single-player behavior: walking away
-    // from Helm holds last command rather than handing off to autopilot) and the two
-    // escorts as always AI, exactly like the FriendlyShip formation logic they replaced.
+    // Solo play: station occupancy is live (see helmIsHuman / getLocalStation) — Meridian
+    // AI takes any console the local human is not currently seated at.
     this.soloShipId = 'player';
+    this._getLocalStation = null; // () => Station string — wired from main.js
     this.onRoomState = null; // (players, hostId, code) => void, for the lobby UI
     this.onStartPatrol = null;
     this.onEntitySpawn = null; // (msg) => void — host-authoritative hostile spawns, non-host mirrors
@@ -102,15 +101,30 @@ export class MultiplayerSession {
   }
 
   /** Does a human occupy this ship's helm at all (local or remote)? Autopilot yields
-   * helm control whenever this is true, even if the human is on another client. */
+   * helm control whenever this is true, even if the human is on another client.
+   * Solo: only while the local player is actually seated at HELM — otherwise AI takes
+   * the conn (weapons seat / radar / walk must not freeze the ship at last rudder). */
   helmIsHuman(shipId) {
-    if (!this.net) return shipId === this.soloShipId;
+    if (!this.net) {
+      if (shipId !== this.soloShipId) return false;
+      return this.getLocalStation() === 'HELM';
+    }
     return !!this.slotHolder(shipId, 'HELM');
   }
 
+  /** Same station-gated rule for weapons: solo AI mans the guns unless the player is
+   * in the WEAPONS seat. */
   weaponsIsHuman(shipId) {
-    if (!this.net) return shipId === this.soloShipId;
+    if (!this.net) {
+      if (shipId !== this.soloShipId) return false;
+      return this.getLocalStation() === 'WEAPONS';
+    }
     return !!this.slotHolder(shipId, 'WEAPONS');
+  }
+
+  /** Overridden from main.js to read PlayerController.state in solo. */
+  getLocalStation() {
+    return this._getLocalStation?.() || 'WALK';
   }
 
   claimSlot(shipId, station) { this.net?.claimSlot(shipId, station); }
