@@ -8,8 +8,11 @@ import { buildEnemyShipMesh } from '../entities/geometryKits.js';
 import { ShipWake } from './ShipWake.js';
 import { allocEntityId, Domain, IFF } from '../entities/Entity.js';
 
-const MODEL_URL = '/assets/models/player_ship.glb?v=burke24';
-const ESCORT_MODEL_URL = '/assets/models/escort_hull.glb';
+// BASE_URL is '/' locally and '/meridian-naval/' on GitHub Pages — absolute
+// '/assets/...' paths 404 on Pages and leave the greybox placeholder forever.
+const ASSET_BASE = import.meta.env.BASE_URL || '/';
+const MODEL_URL = `${ASSET_BASE}assets/models/player_ship.glb?v=burke24`;
+const ESCORT_MODEL_URL = `${ASSET_BASE}assets/models/escort_hull.glb?v=ffg2`;
 
 let sharedEscortScenePromise = null;
 function loadEscortHullScene() {

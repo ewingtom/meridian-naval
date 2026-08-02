@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { getSharedHullTextures } from '../utils/ProceduralTextures.js';
 
-const CONSOLE_MODEL_URL = '/assets/models/bridge_console.glb';
-const CHAIR_MODEL_URL = '/assets/models/bridge_chair.glb';
+const CONSOLE_MODEL_URL = `${import.meta.env.BASE_URL || '/'}assets/models/bridge_console.glb`;
+const CHAIR_MODEL_URL = `${import.meta.env.BASE_URL || '/'}assets/models/bridge_chair.glb`;
 const CONSOLE_AUTHORED_WIDTH = 2.4; // bridge_console.glb's own bounding-box width in meters
 
 let consoleScenePromise = null;

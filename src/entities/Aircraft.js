@@ -4,7 +4,7 @@ import { Entity, Domain, IFF } from './Entity.js';
 import { buildAircraftMesh } from './geometryKits.js';
 
 const State = { INBOUND: 'INBOUND', ATTACK_RUN: 'ATTACK_RUN', EGRESS: 'EGRESS', SHOT_DOWN: 'SHOT_DOWN' };
-const AIR_MODEL_URL = '/assets/models/enemy_aircraft.glb';
+const AIR_MODEL_URL = `${import.meta.env.BASE_URL || '/'}assets/models/enemy_aircraft.glb`;
 
 export class Aircraft extends Entity {
   constructor({ name = 'Bandit', position, scene }) {

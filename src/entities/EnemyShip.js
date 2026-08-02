@@ -11,7 +11,7 @@ const State = { PATROL: 'PATROL', ENGAGE: 'ENGAGE', SINKING: 'SINKING' };
 // to a fully-detailed Burke. escort_hull.glb (built for FS Sentinel/Vanguard, with
 // verified axes and an IFF-trim material for tinting) is the more detailed asset and
 // is reused here tinted hostile red, instead of commissioning a third hull model.
-const MODEL_URL = '/assets/models/escort_hull.glb';
+const MODEL_URL = `${import.meta.env.BASE_URL || '/'}assets/models/escort_hull.glb?v=ffg2`;
 const HOSTILE_TINT = 0x8a2f2f;
 
 let sharedModelPromise = null;

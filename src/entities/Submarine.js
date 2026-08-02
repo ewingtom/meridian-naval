@@ -6,7 +6,7 @@ import { buildSubmarineMesh } from './geometryKits.js';
 const State = { PATROL: 'PATROL', STALK: 'STALK', SURFACE_ATTACK: 'SURFACE_ATTACK', SINKING: 'SINKING' };
 const PERISCOPE_DEPTH = -0.4;
 const SUBMERGED_DEPTH = -14;
-const SUB_MODEL_URL = '/assets/models/enemy_submarine.glb';
+const SUB_MODEL_URL = `${import.meta.env.BASE_URL || '/'}assets/models/enemy_submarine.glb`;
 
 export class Submarine extends Entity {
   constructor({ name = 'Sonar Contact', position, scene }) {
