@@ -103,16 +103,30 @@ let gameOver = false;
 const weapons = new WeaponsSystem(scene, {
   onFire: (key) => {
     if (key === 'gun') audio.playDeckGunFire();
-    else if (key === 'missile') audio.playMissileLaunch();
+    else if (key === 'missile' || key === 'sam' || key === 'lacm') audio.playMissileLaunch();
     else if (key === 'torpedo') audio.playTorpedoLaunch();
     else if (key === 'ciws') audio.playCiwsBurst();
+  },
+  onLandStrike: (pos) => {
+    commsLog.push({
+      speaker: 'STRIKE',
+      text: `Land-attack round impact — grid ${Math.round(pos.x)}, ${Math.round(pos.z)}.`,
+      urgency: 'warning',
+    });
+    shakeCamera(0.35);
   },
   onExplosion: (pos, opts) => {
     if (opts?.underwater) audio.playExplosionSmall({ position: pos });
     else audio.playExplosionLarge({ position: pos });
     shakeCamera(opts?.scale > 1 ? 0.5 : 0.25);
   },
-  onHit: () => {},
+  onHit: (entity, dmg) => {
+    // DamageModel already emits detailed BDA on the comms bus — here we only give
+    // the shooter immediate sensory punch that the round connected.
+    if (!entity || gameOver) return;
+    audio.playHitImpact?.();
+    if (dmg > 12) shakeCamera(0.18);
+  },
   // Any crewed ship can take a hit now, not just one hardcoded player ship — only
   // give the full hit-feedback treatment (shake/vignette/game-over) when it's the
   // ship the LOCAL human is actually standing on.
@@ -152,6 +166,7 @@ const weapons = new WeaponsSystem(scene, {
     if (ship === localShip && spoofed) ewWarningUntil = 0;
   },
 });
+weapons.setOcean(ocean);
 let ewWarningUntil = 0;
 const radar = new RadarSystem({ rangeM: 6000, sonarPingRangeM: 2400 });
 const world = new WorldManager(scene, weapons);
@@ -258,7 +273,12 @@ stationOverlay.onRangeChange = (dir) => {
   radar.rangeM = RADAR_RANGES[radarRangeIdx];
 };
 stationOverlay.onSelectContact = (id) => {
-  if (!id || String(id).startsWith('nav:')) return;
+  // null = DROP HOOK from GCCS-M; must clear the shared designation.
+  if (id == null) {
+    weapons.selectedTargetId = null;
+    return;
+  }
+  if (String(id).startsWith('nav:')) return;
   weapons.selectedTargetId = id;
   audio.playUiConfirm();
 };
@@ -281,11 +301,13 @@ const taskForce = new TaskForceCoop({
   getLocalShip: () => localShip,
   onSharedTrack: (id) => {
     weapons.selectedTargetId = id;
-    const ent = world.entities.find((e) => e.id === id);
+    const ent = world.entities.find((e) => e.id === id) || findLandTargetById(id);
     if (!ent) return;
     const d = String(ent.domain || '').toUpperCase();
     if (d === 'SUBSURFACE') weapons.selectWeapon('torpedo');
-    else if (d === 'AIR') weapons.selectWeapon('missile');
+    else if (d === 'AIR') weapons.selectWeapon('sam');
+    else if (d === 'LAND') weapons.selectWeapon('lacm');
+    else if (d === 'SURFACE') weapons.selectWeapon('missile');
     else weapons.selectWeapon('gun');
   },
 });
@@ -781,7 +803,9 @@ const playerController = new PlayerController({
     const seated = station && station !== 'WALK' && STATION_DEFS[station];
     stationOverlay.setStation(seated ? station : null);
     hud.setAiming(station === Station.WEAPONS);
-    tacRadar.setStationFocus(station === Station.RADAR || station === Station.SONAR || station === Station.TAO);
+    // RADAR/SONAR enlarge the corner scope; TAO owns GCCS-M — hide the corner radar
+    // entirely so it never stacks on the Motif chart.
+    tacRadar.setStationFocus(station === Station.RADAR || station === Station.SONAR);
     if (station !== Station.HELM) headingHold = false;
     if (station !== Station.WEAPONS) {
       playerController.weaponsTrackLock = false;
@@ -799,14 +823,10 @@ const playerController = new PlayerController({
 
     // Dim the corner radar while seated at weapons/helm/lookout so the station UI owns the frame;
     // keep it visible (enlarged) at the radar console.
-    if (station === Station.RADAR) tacRadar.show();
-    else if (station && station !== 'WALK') {
-      // keep a small situational awareness blip visible except lookout immersion
-      if (station === Station.LOOKOUT) tacRadar.hide();
-      else tacRadar.show();
-    } else if (gameStarted) {
-      tacRadar.show();
-    }
+    if (station === Station.RADAR || station === Station.SONAR) tacRadar.show();
+    else if (station === Station.TAO || station === Station.LOOKOUT) tacRadar.hide();
+    else if (station && station !== 'WALK') tacRadar.show();
+    else if (gameStarted) tacRadar.show();
     if (station === Station.HELM) mission.flag('depart');
     if (seated) {
       unlockAudio();
@@ -926,11 +946,33 @@ window.addEventListener('keydown', (e) => {
   if (st === Station.WEAPONS) {
     if (e.code === 'Digit1') weapons.selectWeapon('gun');
     else if (e.code === 'Digit2') weapons.selectWeapon('missile');
-    else if (e.code === 'Digit3') weapons.selectWeapon('torpedo');
-    else if (e.code === 'Digit4') weapons.selectWeapon('drone');
+    else if (e.code === 'Digit3') weapons.selectWeapon('sam');
+    else if (e.code === 'Digit4') weapons.selectWeapon('lacm');
+    else if (e.code === 'Digit5') weapons.selectWeapon('torpedo');
+    else if (e.code === 'Digit6') weapons.selectWeapon('drone');
     else if (e.code === 'KeyT') {
       playerController.weaponsTrackLock = !playerController.weaponsTrackLock;
       audio.playUiConfirm();
+    } else if (e.code === 'KeyR') {
+      // Hard-lock whatever is currently in the reticle (scan-to-lock).
+      const sighted = findSightedContact({ threshold: 0.78, maxDist: 9000, includeLand: true });
+      if (sighted?.entity) {
+        weapons.selectedTargetId = sighted.entity.id;
+        playerController.weaponsTrackLock = true;
+        audio.playUiConfirm();
+        const d = String(sighted.entity.domain || '').toUpperCase();
+        if (d === 'AIR') weapons.selectWeapon('sam');
+        else if (d === 'LAND') weapons.selectWeapon('lacm');
+        else if (d === 'SURFACE' && weapons.selectedWeapon === 'gun') weapons.selectWeapon('missile');
+        else if (d === 'SUBSURFACE') weapons.selectWeapon('torpedo');
+        commsLog.push({
+          speaker: 'WEAPONS',
+          text: `Director lock — ${sighted.entity.name || sighted.entity.id}.`,
+          urgency: 'warning',
+        });
+      } else {
+        commsLog.push({ speaker: 'WEAPONS', text: 'No contact in the reticle — keep scanning.', urgency: 'normal' });
+      }
     } else if (e.code === 'KeyF' || e.code === 'Space') {
       e.preventDefault();
       fireSelectedWeapon();
@@ -938,13 +980,21 @@ window.addEventListener('keydown', (e) => {
       // Snap select nearest inbound threat's source if any, else nearest hostile
       const inbound = getInboundThreats();
       if (inbound.length) {
-        // Prefer nearest hostile surface/air for CIWS-style gun
-        weapons.selectWeapon('gun');
-        const hostiles = lastContacts.filter((c) => c.iff === 'HOSTILE' || c.iff === 'hostile');
-        if (hostiles.length) {
-          hostiles.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
-          weapons.selectedTargetId = hostiles[0].id;
+        // Prefer nearest hostile air for SAM, else gun
+        const air = lastContacts.filter((c) => String(c.domain).toUpperCase() === 'AIR' && (c.iff === 'HOSTILE' || c.iff === 'hostile'));
+        if (air.length) {
+          air.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+          weapons.selectedTargetId = air[0].id;
+          weapons.selectWeapon('sam');
           playerController.weaponsTrackLock = true;
+        } else {
+          weapons.selectWeapon('gun');
+          const hostiles = lastContacts.filter((c) => c.iff === 'HOSTILE' || c.iff === 'hostile');
+          if (hostiles.length) {
+            hostiles.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+            weapons.selectedTargetId = hostiles[0].id;
+            playerController.weaponsTrackLock = true;
+          }
         }
       }
     }
@@ -1039,16 +1089,28 @@ function designateSelectedTrack({ from = 'CIC' } = {}) {
 function evaluateFireSolution(targetEntity, targetInfo) {
   const key = weapons.selectedWeapon;
   if (!targetInfo && key !== 'gun' && key !== 'drone') {
-    return { ok: false, reason: 'NO TRACK', detail: 'Tab to select a contact' };
+    return { ok: false, reason: 'NO TRACK', detail: 'Scan to acquire, Tab to cycle, or R to lock' };
   }
+  const domain = String(targetEntity?.domain || targetInfo?.domain || '').toUpperCase();
   if (key === 'missile') {
-    const domain = String(targetEntity?.domain || '').toUpperCase();
-    // Guided missiles: surface strike + air tracks (escorts already use this doctrine).
-    if (!targetEntity || (domain !== 'SURFACE' && domain !== 'AIR')) {
-      return { ok: false, reason: 'WRONG DOMAIN', detail: 'Missiles need a surface or air track' };
+    if (!targetEntity || domain !== 'SURFACE') {
+      return { ok: false, reason: 'WRONG DOMAIN', detail: 'Anti-ship missiles need a surface track' };
     }
     if (targetEntity.iff === 'FRIENDLY') {
       return { ok: false, reason: 'FRIENDLY', detail: 'Cannot engage friendly track' };
+    }
+  }
+  if (key === 'sam') {
+    if (!targetEntity || domain !== 'AIR') {
+      return { ok: false, reason: 'NO AIR TRACK', detail: 'SAMs need an air track — scan the sky or press G' };
+    }
+    if (targetEntity.iff === 'FRIENDLY') {
+      return { ok: false, reason: 'FRIENDLY', detail: 'Cannot engage friendly air track' };
+    }
+  }
+  if (key === 'lacm') {
+    if (domain !== 'LAND' && !targetEntity?.isLandTarget) {
+      return { ok: false, reason: 'NO LAND TARGET', detail: 'Select OBJ ALPHA/BRAVO (land) or scan the shore' };
     }
   }
   if (key === 'torpedo') {
@@ -1060,13 +1122,19 @@ function evaluateFireSolution(targetEntity, targetInfo) {
     // Require the director camera to be roughly on the target when track-lock is off
     const camDir = new THREE.Vector3();
     camera.getWorldDirection(camDir);
-    const toT = targetEntity.position.clone().sub(camera.position).normalize();
+    const aim = targetEntity.getAimPoint
+      ? targetEntity.getAimPoint(new THREE.Vector3())
+      : (targetEntity.position || targetEntity.group?.position);
+    const toT = aim.clone().sub(camera.position).normalize();
     const align = camDir.dot(toT);
     if (!playerController.weaponsTrackLock && align < 0.55 && key !== 'drone' && key !== 'gun') {
-      return { ok: false, reason: 'OFF BORESIGHT', detail: 'Slew onto target or press T to lock track' };
+      return { ok: false, reason: 'OFF BORESIGHT', detail: 'Slew onto target, scan-lock with R, or press T' };
     }
     if (targetInfo.distanceM > 5500 && key === 'gun') {
       return { ok: false, reason: 'OUT OF RANGE', detail: 'Close range or switch to missile' };
+    }
+    if (targetInfo.distanceM > 14000 && (key === 'sam' || key === 'missile')) {
+      return { ok: false, reason: 'OUT OF RANGE', detail: 'Target beyond engagement envelope' };
     }
   }
   if (!weapons.canFireSelected()) {
@@ -1109,20 +1177,62 @@ function formatBearingSafe(deg) {
   return String(d).padStart(3, '0');
 }
 
-function findSightedContact() {
+function getLandAimpoints() {
+  // Synthetic shore objectives for LACM — islands are scenery, not Entity subclasses.
+  return [
+    {
+      id: 'land:alpha',
+      name: 'OBJ ALPHA (ISLAND)',
+      domain: 'LAND',
+      iff: 'NEUTRAL',
+      isLandTarget: true,
+      alive: true,
+      destroyed: false,
+      getAimPoint(out = new THREE.Vector3()) {
+        return out.set(island.group.position.x, 14, island.group.position.z);
+      },
+      get position() { return island.group.position; },
+    },
+    {
+      id: 'land:bravo',
+      name: 'OBJ BRAVO (ISLET)',
+      domain: 'LAND',
+      iff: 'NEUTRAL',
+      isLandTarget: true,
+      alive: true,
+      destroyed: false,
+      getAimPoint(out = new THREE.Vector3()) {
+        return out.set(islet.group.position.x, 10, islet.group.position.z);
+      },
+      get position() { return islet.group.position; },
+    },
+  ];
+}
+
+function findLandTargetById(id) {
+  return getLandAimpoints().find((t) => t.id === id) || null;
+}
+
+function findSightedContact({ threshold = 0.82, maxDist = 5000, includeLand = false } = {}) {
   const camDir = new THREE.Vector3();
   camera.getWorldDirection(camDir);
   const origin = camera.position;
   let best = null;
-  let bestScore = 0.82; // cos angle threshold
-  const sources = [...world.entities, ...Object.values(ships).filter((s) => s !== localShip)];
+  let bestScore = threshold;
+  const sources = [
+    ...world.entities,
+    ...Object.values(ships).filter((s) => s !== localShip),
+    ...(includeLand ? getLandAimpoints() : []),
+  ];
   for (const e of sources) {
     if (!e || e.destroyed || e.alive === false) continue;
-    const pos = e.position || e.group?.position;
+    const pos = e.getAimPoint
+      ? e.getAimPoint(new THREE.Vector3())
+      : (e.position || e.group?.position);
     if (!pos) continue;
     const to = pos.clone().sub(origin);
     const dist = to.length();
-    if (dist < 40 || dist > 5000) continue;
+    if (dist < 40 || dist > maxDist) continue;
     to.normalize();
     const align = camDir.dot(to);
     if (align > bestScore) {
@@ -1134,6 +1244,7 @@ function findSightedContact() {
         iff: e.iff,
         distanceM: dist,
         reported: !!e.visualId,
+        align,
       };
     }
   }
@@ -1142,7 +1253,10 @@ function findSightedContact() {
 
 function fireSelectedWeapon() {
   const mpts = localShip.mountPoints;
-  const targetEntity = world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive);
+  let targetEntity = world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive) || null;
+  if (!targetEntity && String(weapons.selectedTargetId || '').startsWith('land:')) {
+    targetEntity = findLandTargetById(weapons.selectedTargetId);
+  }
   const selected = lastContacts.find((c) => c.id === weapons.selectedTargetId);
   let targetInfo = null;
   if (selected) {
@@ -1159,14 +1273,20 @@ function fireSelectedWeapon() {
   }
 
   let fromLocal = mpts.gunBarrelTip;
-  if (weapons.selectedWeapon === 'missile') fromLocal = mpts.missileTubes[0];
-  else if (weapons.selectedWeapon === 'torpedo') fromLocal = mpts.missileTubes[2] || mpts.missileTubes[0];
+  const key = weapons.selectedWeapon;
+  if (key === 'missile' || key === 'sam' || key === 'lacm') {
+    fromLocal = mpts.missileTubes[0];
+  } else if (key === 'torpedo') {
+    fromLocal = mpts.missileTubes[2] || mpts.missileTubes[0];
+  }
   const from = localShip.getMountWorld(fromLocal, new THREE.Vector3());
 
   let targetPos;
   if (targetEntity) {
-    targetPos = targetEntity.position.clone();
-    if (weapons.selectedWeapon === 'torpedo' && targetEntity.domain !== 'SUBSURFACE') targetPos = null;
+    targetPos = targetEntity.getAimPoint
+      ? targetEntity.getAimPoint(new THREE.Vector3())
+      : targetEntity.position.clone();
+    if (key === 'torpedo' && targetEntity.domain !== 'SUBSURFACE') targetPos = null;
   }
   if (!targetPos) {
     const dir = new THREE.Vector3();
@@ -1175,14 +1295,20 @@ function fireSelectedWeapon() {
     targetPos = from.clone().addScaledVector(dir, dist > 0 ? dist : 2000);
   }
 
-  const key = weapons.selectedWeapon;
   const fired = weapons.firePlayerWeapon(from, targetPos, targetEntity || null);
   if (fired && mp.inSession) {
     mp.net.sendWeaponFire({
-      type: { gun: 'playerShell', missile: 'playerMissile', torpedo: 'playerTorpedo', drone: 'drone' }[key],
+      type: {
+        gun: 'playerShell',
+        missile: 'playerMissile',
+        sam: 'playerSam',
+        lacm: 'playerLacm',
+        torpedo: 'playerTorpedo',
+        drone: 'drone',
+      }[key],
       from: { x: from.x, y: from.y, z: from.z },
       target: { x: targetPos.x, y: targetPos.y, z: targetPos.z },
-      targetEntityId: targetEntity?.id ?? null,
+      targetEntityId: targetEntity?.isLandTarget ? null : (targetEntity?.id ?? null),
     });
   }
 }
@@ -1435,12 +1561,44 @@ function animate() {
       });
     }
 
+    // Shore objectives for LACM — always on the plot so Weapons can Tab/scan onto them.
+    const playerPos = localShip.group.position;
+    for (const land of getLandAimpoints()) {
+      const aim = land.getAimPoint(new THREE.Vector3());
+      const dx = aim.x - playerPos.x;
+      const dz = aim.z - playerPos.z;
+      lastContacts.push({
+        id: land.id,
+        x: dx,
+        z: dz,
+        domain: 'LAND',
+        iff: 'NEUTRAL',
+        name: land.name,
+        selected: land.id === weapons.selectedTargetId,
+        distanceM: Math.round(Math.hypot(dx, dz)),
+        isLand: true,
+      });
+    }
+
+    // Weapons director: soft-acquire contacts that pass through the reticle while scanning.
+    let weaponsAcquiring = false;
+    if (playerController.state === Station.WEAPONS) {
+      const sighted = findSightedContact({ threshold: 0.90, maxDist: 9000, includeLand: true });
+      if (sighted?.entity) {
+        weaponsAcquiring = true;
+        if (!playerController.weaponsTrackLock || weapons.selectedTargetId === sighted.entity.id) {
+          weapons.selectedTargetId = sighted.entity.id;
+        }
+      }
+    }
+
     const filteredContacts = lastContacts.filter((c) => {
       if (radarFilter === 'ALL') return true;
       if (radarFilter === 'NAV') return c.isWaypoint || c.domain === 'NAV';
       if (radarFilter === 'SURFACE') return c.domain === 'SURFACE' || c.domain === 'surface';
       if (radarFilter === 'AIR') return c.domain === 'AIR' || c.domain === 'air';
       if (radarFilter === 'SUBSURFACE') return c.domain === 'SUBSURFACE' || c.domain === 'subsurface';
+      if (radarFilter === 'LAND') return c.domain === 'LAND' || c.isLand;
       return true;
     });
 
@@ -1456,15 +1614,21 @@ function animate() {
       })),
     });
 
-    // Weapons director camera tracks the designated live entity.
-    const trackEnt = world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive);
-    playerController.trackTargetPos = trackEnt ? trackEnt.position.clone() : null;
+    // Weapons director camera tracks the designated live entity (or land aimpoint).
+    const trackEnt = world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive)
+      || findLandTargetById(weapons.selectedTargetId);
+    if (trackEnt?.getAimPoint) {
+      playerController.trackTargetPos = trackEnt.getAimPoint(new THREE.Vector3());
+    } else {
+      playerController.trackTargetPos = trackEnt?.position ? trackEnt.position.clone() : null;
+    }
 
     // Station overlay instruments — only when seated so we don't burn DOM writes while walking.
     if (STATION_DEFS[playerController.state]) {
       const selected = lastContacts.find((c) => c.id === weapons.selectedTargetId && !c.isWaypoint && !c.isInbound) || null;
       const targetEntity = selected
-        ? world.entities.find((e) => e.id === selected.id)
+        ? (world.entities.find((e) => e.id === selected.id)
+          || (selected.isLand ? findLandTargetById(selected.id) : null))
         : null;
       let targetInfo = null;
       if (selected) {
@@ -1495,6 +1659,8 @@ function animate() {
         target: targetInfo,
         fireSolution,
         trackLock: playerController.weaponsTrackLock,
+        acquiring: weaponsAcquiring,
+        weaponsZoom: playerController.weaponsZoom,
         inbound,
         contacts: filteredContacts.map((c) => ({
           id: c.id,

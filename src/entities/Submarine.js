@@ -137,6 +137,7 @@ export class Submarine extends Entity {
   }
 
   _applyTransform() {
+    this.position.y = this.depth;
     this.group.position.set(this.position.x, this.depth, this.position.z);
     this.group.rotation.y = this.heading;
   }

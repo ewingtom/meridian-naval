@@ -407,20 +407,45 @@
   bottom: 28px;
   width: min(280px, 28vw);
 }
-/* TAO's GCCS-M chart is full-width (left column + chart together span the whole
-   available area, unlike Radar/Sonar's narrower single-column layout), so the
-   left:340px dock used above would land on top of the chart. Dock top-right instead,
-   below the corner tactical-radar widget — same corner pattern already used for
-   Helm/Weapons below. */
+/* TAO owns the full Motif workstation — hide ShipHUD twins that collide with
+   the GCCS-M window, tuck coop/comms into a thin right strip clear of the chart,
+   and keep the corner tactical radar hidden (main.js hides it; CSS is the belt). */
+#ui-root[data-seat="TAO"] .shud-bottom-left,
+#ui-root[data-seat="TAO"] .shud-bottom-right,
+#ui-root[data-seat="TAO"] .shud-objective,
+#ui-root[data-seat="TAO"] .tac-radar {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+#ui-root[data-seat="TAO"] .shud-compass {
+  opacity: 0.55;
+  transform: scale(0.85);
+  transform-origin: top center;
+}
 #ui-root[data-seat="TAO"] .coop-panel {
-  top: 300px;
+  top: 78px;
   right: 18px;
+  width: min(200px, 18vw);
+  max-height: 140px;
+  overflow: hidden;
 }
 #ui-root[data-seat="TAO"] .comms-log {
   right: 18px;
   left: auto;
   bottom: 18px;
-  width: min(280px, 28vw);
+  width: min(240px, 20vw);
+  max-height: 160px;
+}
+
+/* RADAR/SONAR: hide bottom ShipHUD weapon/hull twins that fight the contact column. */
+#ui-root[data-seat="RADAR"] .shud-bottom-left,
+#ui-root[data-seat="RADAR"] .shud-bottom-right,
+#ui-root[data-seat="SONAR"] .shud-bottom-left,
+#ui-root[data-seat="SONAR"] .shud-bottom-right {
+  opacity: 0;
+  pointer-events: none !important;
+  visibility: hidden;
 }
 
 /* LOOKOUT: immersive — tuck secondary panels. */

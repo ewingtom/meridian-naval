@@ -13,9 +13,21 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
 #ui-root .station-overlay .stn-notch,
 #ui-root .station-overlay .stn-filter-row button,
 #ui-root .station-overlay .stn-range-row button,
-#ui-root .station-overlay .stn-contact-row[data-contact-id] {
+#ui-root .station-overlay .stn-contact-row[data-contact-id],
+/* The GCCS-M chart IS the primary input surface at TAO — it has a real click
+   handler (StationOverlay._onTaoCanvasClick) for selecting tracks directly off
+   the plot, but the blanket `.station-overlay * { pointer-events: none }` rule
+   above swallowed every click before it arrived, so the mouse appeared dead on
+   the terminal. Everything else in that window (title bar, scale bar, legend,
+   data block) stays click-through by design. */
+#ui-root .station-overlay .gccsm-canvas {
   pointer-events: auto !important;
   cursor: pointer;
+}
+/* The track table is a scrollable list — allow wheel/drag scrolling, not just
+   clicks on individual rows. */
+#ui-root .station-overlay .gccsm-tracktable {
+  pointer-events: auto !important;
 }
 body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #dfe8ee; }
 

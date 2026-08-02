@@ -7,6 +7,7 @@ import { buildBridgeInterior } from './BridgeInterior.js';
 import { buildEnemyShipMesh } from '../entities/geometryKits.js';
 import { ShipWake } from './ShipWake.js';
 import { allocEntityId, Domain, IFF } from '../entities/Entity.js';
+import { DamageState, getMunitionSpec } from '../systems/DamageModel.js';
 
 // BASE_URL is '/' locally and '/meridian-naval/' on GitHub Pages — absolute
 // '/assets/...' paths 404 on Pages and leave the greybox placeholder forever.
@@ -56,13 +57,20 @@ export class CrewedShip {
     this.id = allocEntityId();
     this.domain = Domain.SURFACE;
     this.iff = IFF.FRIENDLY;
-    this.maxHealth = 100;
-    this.health = 100;
     this.alive = true;
     this.destroyed = false;
+    this.isCrewedShip = true;
+    this.baseName = name;
+    // Shared survivability model (src/systems/DamageModel.js) — identical code
+    // path to every hostile contact, so the player's own ship degrades exactly
+    // the way the ship they just shot does. The Meridian is an Arleigh Burke
+    // Flight IIA (~9,700 t, excellent subdivision + a full DC organisation);
+    // the task-force escorts are ~4,000 t frigates.
+    this.damage = new DamageState(this, {
+      shipClass: hullKind === 'hero' ? 'destroyer' : 'frigate',
+    });
     this.ciwsAmmo = 1500;
     this._ciwsCooldown = 0;
-    this.fireIntensity = 0; // 0-1; Damage Control doctrine hook, see takeDamage/updateDamageControl
     // Electronic Warfare doctrine hook: soft-kill defense (chaff/decoys), distinct from
     // CIWS's hard-kill — see WeaponsSystem.deployChaff. Longer engagement range than
     // CIWS so a threat gets an EW pass first, then a CIWS pass if that fails.
@@ -546,9 +554,23 @@ export class CrewedShip {
     return Object.keys(pts).length ? pts : null;
   }
 
+  /** Commanded throttle/rudder are clamped by battle damage: a wrecked plant
+   * caps how much way she can make (and flooding drags on top of that), a
+   * steering casualty makes her sluggish. The player feels their own ship go
+   * slow and mushy after a machinery hit — same rule the hostiles run under. */
   setCommand(throttle, rudder) {
-    this.physics.setCommand(throttle, rudder);
+    const cap = this.damage.speedFactor;
+    this.physics.setCommand(
+      THREE.MathUtils.clamp(throttle, -cap, cap),
+      rudder * this.damage.turnFactor
+    );
   }
+
+  /** Effective detection range multiplier — a sensors casualty shrinks the
+   * radar picture. Consumed by whatever drives this ship's radar range. */
+  get sensorFactor() { return this.damage.sensorFactor; }
+  /** Fire-control state: false = firepower kill, this ship cannot engage. */
+  get weaponsOnline() { return this.damage.weaponsOnline; }
 
   update(dt, elapsed, getWaveHeight) {
     if (this.networked && this._netTarget) {
@@ -567,8 +589,24 @@ export class CrewedShip {
     }
     this.physics.update(dt, getWaveHeight, elapsed);
     this.physics.applyToObject3D(this.group);
+    this._applyBattleDamageAttitude();
     this.group.updateMatrixWorld();
     this.wake?.update(dt, elapsed, getWaveHeight);
+  }
+
+  /** Asymmetric flooding = a visible list, and a ship settling deeper as she
+   * takes water on. Applied after physics writes the wave-driven attitude so it
+   * reads as damage on top of normal sea motion, not instead of it. */
+  _applyBattleDamageAttitude() {
+    const d = this.damage;
+    if (d.list !== 0) this.group.rotateZ(d.list);
+    if (d.flooding > 0) this.group.position.y -= d.flooding * 1.8;
+    if (d.lost) {
+      // Settling by the head with a heavy list, then under.
+      this._sinkT = (this._sinkT || 0) + 0.016;
+      this.group.position.y -= Math.min(this._sinkT * 1.1, 40);
+      this.group.rotateZ(d.listSign * Math.min(this._sinkT * 0.05, 0.7));
+    }
   }
 
   applyNetworkState({ pos, heading, speed, roll, pitch }) {
@@ -592,42 +630,93 @@ export class CrewedShip {
     return this.group.position.distanceTo(vec3);
   }
 
-  takeDamage(amount) {
-    if (!this.alive) return;
-    this.health = Math.max(0, this.health - amount);
-    // Damage Control doctrine hook: a hard enough hit has a chance to start a fire
-    // that keeps burning (and keeps costing hull integrity) until someone fights it —
-    // gives crews something concrete to react to after a hit lands, beyond watching a
-    // health bar drop. AI crews always run a slow passive suppression baseline (damage
-    // control parties exist even with nobody personally manning a DC station); an
-    // actively-fighting human is much faster — see updateDamageControl().
-    if (amount > 12 && Math.random() < 0.4) {
-      this.fireIntensity = Math.min(1, this.fireIntensity + 0.35 + Math.random() * 0.25);
+  // --- Damage model surface -------------------------------------------------
+  // `health` / `maxHealth` / `fireIntensity` are kept as the public API every
+  // existing consumer already uses (HUD hull bar, damage vignette, the fire
+  // alert + "hold X" prompt, radar contact readouts, multiplayer replication)
+  // but they are now views onto the shared DamageState rather than standalone
+  // numbers, so all of them stay correct for free.
+  get maxHealth() { return this.damage.capacity; }
+  set maxHealth(v) { if (Number.isFinite(v) && v > 0) this.damage.capacity = v; }
+  get health() { return this.damage.structure; }
+  set health(v) {
+    if (!Number.isFinite(v)) return;
+    if (v >= this.damage.capacity) this.repairAll();
+    else this.damage.structure = Math.max(0, v);
+  }
+  get fireIntensity() { return this.damage.fire; }
+  set fireIntensity(v) { if (Number.isFinite(v)) this.damage.fire = THREE.MathUtils.clamp(v, 0, 1); }
+
+  /** Live damage/subsystem snapshot for HUD + debugging (see DamageState.report). */
+  get damageReport() { return this.damage.report(); }
+
+  /** Full restore — "New Patrol" / respawn paths reset via `health = maxHealth`. */
+  repairAll() {
+    const d = this.damage;
+    d.structure = d.capacity;
+    d.fire = 0; d.flooding = 0; d.floodRate = 0; d.list = 0;
+    d.missionKill = false; d.catastrophic = false; d.lost = false;
+    d.hitCount = 0; d.lastHit = null; d._fireReported = false; d._floodReported = false;
+    for (const k in d.systems) d.systems[k] = 1;
+    d._updateStatusTag();
+    this.alive = true;
+    this.destroyed = false;
+    this._lossNotified = false;
+  }
+
+  /**
+   * @param {number} amount  legacy raw structural points (fallback only)
+   * @param {object} [info]  { munition, impactWorld, warheadKg, kind, label } —
+   *                         the real path used by WeaponsSystem, which knows
+   *                         what hit us and exactly where it landed.
+   */
+  takeDamage(amount, info = null) {
+    if (!this.alive) return null;
+    let result;
+    if (info && (info.munition || info.warheadKg != null)) {
+      const spec = info.munition ? getMunitionSpec(info.munition) : info;
+      result = this.damage.applyHit({
+        warheadKg: info.warheadKg ?? spec.warheadKg,
+        frag: info.frag ?? spec.frag ?? 1,
+        kind: info.kind ?? spec.kind,
+        label: info.label ?? spec.label,
+        impactWorld: info.impactWorld || null,
+      });
+    } else {
+      result = this.damage.applyHit({
+        warheadKg: Math.max(1, amount * 3),
+        kind: 'generic',
+        label: 'ordnance',
+        impactWorld: info?.impactWorld || null,
+      });
     }
-    if (this.health <= 0) {
+    if (this.damage.lost) {
       this.alive = false;
       this.destroyed = true;
     }
+    return result;
   }
 
   /** Called once per simulated frame (see main.js's per-ship loop) for whichever ship
    * this client is authoritative for. `fighting` is true while a human is actively
    * holding the fight-fire control on THIS ship; AI-crewed ships (or a ship the local
-   * human isn't currently fighting fire on) still get a slow passive suppression rate,
+   * human isn't currently fighting fire on) still get the slow passive baseline,
    * matching how a real DC party works a casualty even without the CO standing over
-   * them, just much slower than someone actively on the hose. */
+   * them, just much slower than someone actively on the hose.
+   *
+   * The actual fire/flooding/repair integration lives in DamageState.tick(), driven
+   * once per frame for every hull in play from DamageModel.tickAllDamage() — this
+   * only tells the model whether a human is on the hose right now. */
   updateDamageControl(dt, { fighting = false } = {}) {
-    if (this.fireIntensity <= 0) return;
-    this.health = Math.max(0, this.health - this.fireIntensity * dt * 2.2);
-    const suppressRate = fighting ? 0.42 : 0.05;
-    this.fireIntensity = Math.max(0, this.fireIntensity - suppressRate * dt);
-    if (this.health <= 0 && this.alive) {
+    this.damage.dcActive = !!fighting;
+    if (this.damage.lost && this.alive) {
       this.alive = false;
       this.destroyed = true;
     }
   }
 
   dispose(scene) {
+    this.damage?.dispose();
     this.wake?.dispose();
     scene.remove(this.group);
     this.group.traverse((o) => {

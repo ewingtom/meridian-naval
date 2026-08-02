@@ -2,21 +2,44 @@ import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
 import { Explosion } from './Explosion.js';
 import { LaunchEffect } from './LaunchEffect.js';
+import { getWeaponFx } from './FxParticles.js';
+import { CiwsMountManager } from './CiwsMount.js';
+import { tickAllDamage } from '../systems/DamageModel.js';
+
+const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
+const CIWS_ROUND_SPEED = 1120;
+const CIWS_KILL_RADIUS = 9;
+
+/** Closest distance from point `p` to the swept segment a→b. Used so a 1100 m/s CIWS
+ * round can't tunnel straight past its target between two frames. */
+function segmentPointDistance(a, b, p) {
+  _v.subVectors(b, a);
+  const len2 = _v.lengthSq();
+  if (len2 < 1e-6) return a.distanceTo(p);
+  const t = THREE.MathUtils.clamp(_v2.subVectors(p, a).dot(_v) / len2, 0, 1);
+  return _v3.copy(a).addScaledVector(_v, t).distanceTo(p);
+}
 
 const PLAYER_WEAPONS = {
   gun: { label: '130mm Deck Gun', ammoKey: null, cooldown: 0.7, projType: 'playerShell' },
-  missile: { label: 'Guided Missile', ammoKey: 'missile', maxAmmo: 16, cooldown: 1.6, projType: 'playerMissile' },
+  missile: { label: 'Anti-Ship Missile', ammoKey: 'missile', maxAmmo: 12, cooldown: 1.6, projType: 'playerMissile' },
+  sam: { label: 'Air Defense Missile', ammoKey: 'sam', maxAmmo: 24, cooldown: 1.1, projType: 'playerSam' },
+  lacm: { label: 'Land Attack Cruise', ammoKey: 'lacm', maxAmmo: 8, cooldown: 2.8, projType: 'playerLacm' },
   torpedo: { label: 'ASROC Torpedo', ammoKey: 'torpedo', maxAmmo: 8, cooldown: 2.4, projType: 'playerTorpedo' },
   drone: { label: 'Recon Drone', ammoKey: 'drone', maxAmmo: 2, cooldown: 3, projType: 'drone' },
 };
 
 const LAUNCH_FX = {
   playerShell: { scale: 0.45, color: 0xffe08a },
-  playerMissile: { scale: 1.35, color: 0xffc070 },
+  playerMissile: { scale: 2.1, color: 0xffc070 },
+  playerSam: { scale: 1.85, color: 0x9ad8ff },
+  playerLacm: { scale: 2.35, color: 0xd2c48a },
   playerTorpedo: { scale: 1.15, color: 0xa8d8e8 },
   enemyShell: { scale: 0.4, color: 0xff8a5a },
-  enemyMissile: { scale: 1.25, color: 0xff7040 },
-  airMissile: { scale: 1.05, color: 0xff7040 },
+  enemyMissile: { scale: 1.9, color: 0xff7040 },
+  airMissile: { scale: 1.45, color: 0xff7040 },
   torpedo: { scale: 0.9, color: 0x88c0c8, underwater: true },
   ciwsRound: { scale: 0.25, color: 0xffe98a },
 };
@@ -29,9 +52,9 @@ export class WeaponsSystem {
     this.launchFx = [];
     this.cb = callbacks; // { onFire, onExplosion, onHit(entity,dmg), onShipHit(ship,dmg) }
 
-    this.ammo = { missile: 16, torpedo: 8, drone: 2 };
+    this.ammo = { missile: 12, sam: 24, lacm: 8, torpedo: 8, drone: 2 };
     this.selectedWeapon = 'gun';
-    this._cooldowns = { gun: 0, missile: 0, torpedo: 0, drone: 0 };
+    this._cooldowns = { gun: 0, missile: 0, sam: 0, lacm: 0, torpedo: 0, drone: 0 };
 
     this.ciwsRangeM = 900;
     // EW soft-kill range is well outside CIWS's hard-kill range — a missile gets an
@@ -40,6 +63,32 @@ export class WeaponsSystem {
     this.chaffRangeM = 3000;
 
     this.selectedTargetId = null;
+
+    // --- VFX ---------------------------------------------------------------
+    // Three pooled draw calls (smoke, fire/sparks, tracers) shared by every weapon,
+    // plus the visible, slewing CIWS mounts.
+    this.fx = getWeaponFx(scene);
+    this.ciwsMounts = new CiwsMountManager(scene);
+    this._elapsed = 0;
+    this._ocean = null;
+    this._waveY = null;
+  }
+
+  /** Let the host app hand us the ocean so sea-skimming missiles can hold altitude
+   * over the real wave surface. Falls back to auto-discovery via window.GAME.ocean
+   * so this works without touching the bootstrap. */
+  setOcean(ocean) {
+    this._ocean = ocean;
+    this._waveY = ocean?.getHeightAt
+      ? (x, z) => this._ocean.getHeightAt(x, z, this._elapsed)
+      : null;
+  }
+
+  _waveSampler() {
+    if (this._waveY) return this._waveY;
+    const ocean = typeof window !== 'undefined' ? window.GAME?.ocean : null;
+    if (ocean?.getHeightAt) this.setOcean(ocean);
+    return this._waveY;
   }
 
   /** Soft-kill defense: spoof the nearest inbound missile threatening `ship` with
@@ -108,14 +157,28 @@ export class WeaponsSystem {
     const p = new Projectile(type, fromPos, targetPos, { ...opts, scene: this.scene });
     this.projectiles.push(p);
 
-    const fx = LAUNCH_FX[type];
+    // CIWS rounds get no launch bloom of their own — the mount's muzzle flash and the
+    // tracer stream are the visual, and one bloom per round at 8/s would white out.
+    const fx = type === 'ciwsRound' ? null : LAUNCH_FX[type];
     if (fx) {
-      const loft = new THREE.Vector3().subVectors(targetPos, fromPos);
+      // The round's own initial attitude drives the effect, so a vertical VLS shot
+      // blows its efflux straight up off the deck while a canister shot blows it aft.
+      const loft = p.velocity.lengthSq() > 0.01
+        ? p.velocity.clone().normalize()
+        : new THREE.Vector3().subVectors(targetPos, fromPos);
       if (loft.lengthSq() < 0.01) loft.set(0, 1, 0);
-      this.launchFx.push(new LaunchEffect(this.scene, fromPos.clone(), {
-        ...fx,
-        loft,
-      }));
+      loft.normalize();
+      this.launchFx.push(new LaunchEffect(this.scene, fromPos.clone(), { ...fx, loft }));
+
+      // Big, lingering deflected-exhaust cloud at the tube. This is the part that
+      // makes a launch unmistakable from any station or camera angle.
+      if (p.cfg.asm || p.cfg.asroc) {
+        this.fx.launchCloud(fromPos, loft, {
+          scale: fx.scale * (p.cfg.asm?.vls ? 1.15 : 0.95),
+          color: fx.underwater ? 0xcfeeff : 0x9fa3a8,
+          hot: fx.color,
+        });
+      }
     }
     return p;
   }
@@ -131,6 +194,35 @@ export class WeaponsSystem {
   update(dt, { ships, enemies, elapsed, camera }) {
     for (const k in this._cooldowns) this._cooldowns[k] = Math.max(0, this._cooldowns[k] - dt);
 
+    // Every pooled VFX system runs off one shared clock so particles spawned by any
+    // weapon this frame age consistently.
+    this._elapsed = elapsed;
+    this.fx.update(elapsed);
+    const waveY = this._waveSampler();
+    const flightCtx = { now: elapsed, waveY };
+
+    // --- damage progression for every hull in play (fires spreading, flooding
+    // building, damage-control parties winning or losing). Driven from here
+    // because this is the one system guaranteed to run exactly once per
+    // simulated frame with the whole cast in scope. See systems/DamageModel.js.
+    tickAllDamage(dt);
+    // A ship can now be lost to fire or flooding with no new round landing;
+    // reuse the existing onShipHit channel so the local player's loss/impact
+    // feedback (and the game-over check hanging off it) still fires.
+    for (const ship of ships) {
+      if (ship.damage?.lost && !ship._lossNotified) {
+        ship._lossNotified = true;
+        this.cb.onShipHit?.(ship, ship.maxHealth * 0.25);
+      }
+    }
+
+    // --- CIWS mounts: keep them stuck to their ships and tracking the nearest
+    // airborne threat, so a mount is already laid on the bearing before it opens up.
+    const airThreats = this.projectiles.filter(
+      (p) => !p.dead && (p.type === 'enemyMissile' || p.type === 'airMissile')
+    );
+    this.ciwsMounts.update(dt, elapsed, ships, airThreats);
+
     // --- CIWS auto-defense: each ship intercepts incoming ordnance aimed near it ---
     for (const ship of ships) {
       if (!ship.alive) continue;
@@ -144,9 +236,41 @@ export class WeaponsSystem {
       if (threat && threat.type !== 'torpedo') {
         ship._ciwsCooldown = 0.12;
         ship.ciwsAmmo -= 1;
-        const from = shipPos.clone().add(new THREE.Vector3(0, 14, 0));
-        this.spawn('ciwsRound', from, threat.position.clone(), { targetEntity: threat });
+
+        // Fire from the mount that's actually pointing at the threat, and lead the
+        // target by the round's time of flight the way a real fire-control loop does.
+        const mount = this.ciwsMounts.best(ship, threat.position);
+        const from = mount
+          ? mount.muzzleWorld(new THREE.Vector3())
+          : shipPos.clone().add(new THREE.Vector3(0, 14, 0));
+        const tof = from.distanceTo(threat.position) / CIWS_ROUND_SPEED;
+        const aim = threat.position.clone().addScaledVector(threat.velocity, tof);
+
+        this.spawn('ciwsRound', from, aim, { targetEntity: threat });
+
+        // The visual: a dense stream of tracers, not one slow bullet. Phalanx runs
+        // ~4500 rpm, so each 0.12s trigger pull is a handful of rounds in the air.
+        const dir = aim.clone().sub(from).normalize();
+        this.fx.ciwsBurst(from, dir, from.distanceTo(aim), {
+          rounds: 18,
+          color: 0xfff6c0,
+          spread: 0.028,
+        });
+        mount?.onFire(elapsed);
         this.cb.onFire?.('ciws');
+      }
+    }
+
+    // Burning hulls — continuous fire/smoke so damage reads on the water, not only in logs.
+    for (const ship of ships) {
+      const intensity = ship.damage?.fire ?? ship.fireIntensity ?? 0;
+      if (intensity > 0.04) this.fx.hullFire(ship.group.position, intensity);
+    }
+    for (const e of enemies) {
+      const intensity = e.damage?.fire ?? 0;
+      if (intensity > 0.04) {
+        const p = e.getAimPoint?.(_v) || e.group?.position || e.position;
+        this.fx.hullFire(p, intensity);
       }
     }
 
@@ -170,7 +294,7 @@ export class WeaponsSystem {
     // --- update projectiles, collide vs entities / ships ---
     for (const p of this.projectiles) {
       if (p.dead) continue;
-      p.update(dt, camera);
+      p.update(dt, camera, flightCtx);
 
       // ASROC / torpedo water entry splash
       if (p.didSplash && p.splashPos) {
@@ -185,11 +309,17 @@ export class WeaponsSystem {
         p.splashPos = null;
       }
 
-      // CIWS rounds intercept the projectile they were fired at
+      // CIWS rounds intercept the projectile they were fired at. Tested against the
+      // swept path, not the instantaneous position — at 1100 m/s a round covers ~18 m
+      // per frame and would otherwise flick straight through the target.
       if (p.type === 'ciwsRound' && p.targetEntity && !p.targetEntity.dead) {
-        if (p.position.distanceTo(p.targetEntity.position) < 6) {
+        const threatPos = p.targetEntity.position;
+        if (segmentPointDistance(p.prevPosition, p.position, threatPos) < CIWS_KILL_RADIUS) {
+          const killPos = threatPos.clone();
           p.targetEntity.dead = true;
-          this.explode(p.targetEntity.position.clone(), { scale: 0.5 });
+          // Frag airburst — white flash + shrapnel star; distinct from a hull hit.
+          this.explode(killPos, { scale: 1.35, airburst: true });
+          this.fx.airburst(killPos, { scale: 2.1 });
           p.dead = true;
         }
         continue;
@@ -200,29 +330,56 @@ export class WeaponsSystem {
         continue;
       }
 
-      const isFriendlyWeapon = ['playerShell', 'playerMissile', 'playerTorpedo', 'ciwsRound'].includes(p.type);
+      // LACM proximity fuse against a land aimpoint (no living entity to collide with).
+      if (p.type === 'playerLacm' && p.targetPos && (!p.targetEntity || p.targetEntity.isLandTarget)) {
+        const aimY = p.targetPos.y ?? 8;
+        if (p.position.distanceTo(p.targetPos) < (p.cfg.radius || 36)
+          || (p.position.y <= aimY + 2 && p.position.distanceToSquared(p.targetPos) < 90 * 90)) {
+          this.explode(p.position.clone(), { scale: 2.6 });
+          this.cb.onLandStrike?.(p.targetPos.clone(), p);
+          p.dead = true;
+          continue;
+        }
+      }
+
+      const isFriendlyWeapon = ['playerShell', 'playerMissile', 'playerSam', 'playerLacm', 'playerTorpedo', 'ciwsRound'].includes(p.type);
       if (isFriendlyWeapon) {
         for (const e of enemies) {
           if (!e.alive || e.destroyed) continue;
           if (e.domain === 'SUBSURFACE' && p.type !== 'playerTorpedo') continue;
-          // Missiles/shells shouldn't strike subs; air targets OK for missile/gun
-          if (e.domain === 'AIR' && p.type === 'playerTorpedo') continue;
-          if (p.position.distanceTo(e.position) < p.cfg.radius) {
-            e.takeDamage(p.cfg.damage);
-            this.cb.onHit?.(e, p.cfg.damage);
-            this.explode(p.position.clone(), { scale: p.cfg.damage > 40 ? 1.4 : 0.8, underwater: e.domain === 'SUBSURFACE' });
+          if (e.domain === 'AIR' && (p.type === 'playerTorpedo' || p.type === 'playerLacm')) continue;
+          if (e.domain === 'SURFACE' && p.type === 'playerSam') continue;
+          if (e.domain !== 'AIR' && p.type === 'playerSam') continue;
+          const aim = e.getAimPoint ? e.getAimPoint(_v) : e.position;
+          const hitR = (e.hitRadius || 28) + (p.cfg.radius || 12) * 0.35;
+          // SAMs get a slightly generous proximity fuse — the warhead is a frag burst.
+          const fuse = p.type === 'playerSam' ? hitR * 1.35 : hitR;
+          if (p.position.distanceTo(aim) < fuse) {
+            const impact = p.position.clone();
+            const res = e.takeDamage(0, { munition: p.type, impactWorld: impact });
+            const applied = res?.applied ?? 0;
+            this.cb.onHit?.(e, applied, res);
+            this.explode(impact, {
+              scale: res?.catastrophic ? 2.4 : p.type === 'playerSam' ? 1.1 : applied > 25 ? 1.6 : 1.0,
+              underwater: e.domain === 'SUBSURFACE',
+              airburst: p.type === 'playerSam',
+            });
+            if (p.type === 'playerSam') this.fx.airburst(impact, { scale: 1.3 });
             p.dead = true;
             break;
           }
         }
       } else {
-        // hostile ordnance vs whichever crewed ship it's actually closest to
         for (const ship of ships) {
           if (!ship.alive) continue;
-          if (p.position.distanceTo(ship.group.position) < p.cfg.radius) {
-            ship.takeDamage(p.cfg.damage);
-            this.cb.onShipHit?.(ship, p.cfg.damage);
-            this.explode(p.position.clone(), { scale: 1.2 });
+          const shipHitR = Math.max(p.cfg.radius, (ship.length || ship.physics?.length || 140) * 0.22);
+          if (p.position.distanceTo(ship.group.position) < shipHitR) {
+            const impact = p.position.clone();
+            const res = ship.takeDamage(0, { munition: p.type, impactWorld: impact });
+            const applied = res?.applied ?? 0;
+            if (ship.damage?.lost) ship._lossNotified = true;
+            this.cb.onShipHit?.(ship, applied, res);
+            this.explode(impact, { scale: res?.catastrophic ? 2.4 : 1.35 });
             p.dead = true;
             break;
           }

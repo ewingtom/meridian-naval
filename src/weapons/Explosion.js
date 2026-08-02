@@ -113,17 +113,22 @@ function buildEmberGeometry(count) {
  * stay cheap with several alive at once.
  */
 export class Explosion {
-  constructor(scene, position, { scale = 1, underwater = false } = {}) {
+  constructor(scene, position, { scale = 1, underwater = false, airburst = false } = {}) {
     this.scene = scene;
     this.age = 0;
     this.scale = scale;
     this.underwater = underwater;
+    // An airburst (CIWS frag kill) must NOT read like a ship hit: no rolling fireball
+    // and no lingering column of smoke, just a hard white flash that snaps out.
+    this.airburst = airburst;
     this.dead = false;
-    this.fireballLife = 1.05 * scale;
-    this.life = 2.6 * Math.min(1.6, scale);
+    this.fireballLife = (airburst ? 0.34 : 1.05) * scale;
+    this.life = airburst ? Math.max(0.55, 0.9 * scale) : 2.6 * Math.min(1.6, scale);
 
-    const hot = (underwater ? new THREE.Color(0x8fe8ff) : new THREE.Color(0xffb247)).multiplyScalar(underwater ? 2.0 : 2.4);
-    const core = underwater ? new THREE.Color(0x1c5a70) : new THREE.Color(0x5c1604);
+    const hot = airburst
+      ? new THREE.Color(0xfff4d4).multiplyScalar(3.2)
+      : (underwater ? new THREE.Color(0x8fe8ff) : new THREE.Color(0xffb247)).multiplyScalar(underwater ? 2.0 : 2.4);
+    const core = airburst ? new THREE.Color(0xbfc4c8) : (underwater ? new THREE.Color(0x1c5a70) : new THREE.Color(0x5c1604));
 
     this.fireMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -155,7 +160,10 @@ export class Explosion {
     this.core.scale.setScalar(0.05);
     scene.add(this.core);
 
-    this.light = new THREE.PointLight(underwater ? 0x66d0e8 : 0xffb347, 55 * scale, 140 * scale, 2);
+    this.light = new THREE.PointLight(
+      airburst ? 0xfff0cc : (underwater ? 0x66d0e8 : 0xffb347),
+      55 * scale, 140 * scale, 2
+    );
     this.light.position.copy(position);
     scene.add(this.light);
 
@@ -184,24 +192,41 @@ export class Explosion {
     scene.add(this.embers);
 
     // --- shockwave ring ---
-    this.ringLife = 0.9 * Math.max(1, scale);
-    this.ringMat = new THREE.MeshBasicMaterial({
-      map: getSharedRingTexture(),
-      color: underwater ? 0xaeeeff : 0xfff0c0,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      opacity: 0,
-    });
-    this.ring = new THREE.Mesh(ringGeo, this.ringMat);
-    this.ring.position.copy(position);
-    this.ring.position.y += underwater ? 0.05 : 0.15;
-    this.ring.scale.setScalar(0.1);
-    scene.add(this.ring);
+    // Surface bursts throw a ring across the water plane; an airburst has no ground to
+    // spread over, so its blast ring is a camera-facing sprite instead of a flat disc.
+    this.ringLife = (airburst ? 0.4 : 0.9) * Math.max(1, scale);
+    if (airburst) {
+      this.ringMat = new THREE.SpriteMaterial({
+        map: getSharedRingTexture(),
+        color: 0xfffaf0,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        opacity: 0,
+      });
+      this.ring = new THREE.Sprite(this.ringMat);
+      this.ring.position.copy(position);
+      this.ring.scale.setScalar(0.1);
+      scene.add(this.ring);
+    } else {
+      this.ringMat = new THREE.MeshBasicMaterial({
+        map: getSharedRingTexture(),
+        color: underwater ? 0xaeeeff : 0xfff0c0,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        opacity: 0,
+      });
+      this.ring = new THREE.Mesh(ringGeo, this.ringMat);
+      this.ring.position.copy(position);
+      this.ring.position.y += underwater ? 0.05 : 0.15;
+      this.ring.scale.setScalar(0.1);
+      scene.add(this.ring);
+    }
 
     // --- lingering smoke puff (surface hits above a small-hit threshold only) ---
-    if (!underwater && scale > 0.55) {
+    if (!underwater && !airburst && scale > 0.55) {
       const smokeTex = getSharedFoamTexture();
       this.smokeSprites = [];
       this.smokeGroup = new THREE.Group();

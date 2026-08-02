@@ -98,6 +98,8 @@ export class Aircraft extends Entity {
   }
 
   _applyTransform() {
+    // Keep position.y in sync so weapons/homing that read `entity.position` still work.
+    this.position.y = this.altitude;
     this.group.position.set(this.position.x, this.altitude, this.position.z);
     this.group.rotation.y = this.heading;
   }

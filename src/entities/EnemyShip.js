@@ -23,8 +23,17 @@ function loadDestroyerScene() {
 }
 
 export class EnemyShip extends Entity {
-  constructor({ name = 'Contact', position, patrolPoints = [], scene }) {
-    super({ name, domain: Domain.SURFACE, iff: IFF.HOSTILE, maxHealth: 140, position });
+  constructor({ name = 'Contact', position, patrolPoints = [], scene, shipClass = null }) {
+    // Survivability now comes from the shared DamageModel: this hull is an
+    // escort-sized frigate (~4,000 t) unless the spawn name marks it a DDG, in
+    // which case it gets the heavier destroyer profile. No arbitrary hitpoints.
+    super({
+      name,
+      domain: Domain.SURFACE,
+      iff: IFF.HOSTILE,
+      position,
+      shipClass: shipClass || (/DDG/i.test(name) ? 'destroyer' : 'frigate'),
+    });
     // Instant procedural stand-in, then swap for Blender hero mesh when ready.
     const { group, length, beam, deckY } = buildEnemyShipMesh();
     this.group = group;
@@ -150,24 +159,38 @@ export class EnemyShip extends Entity {
   onDestroyed() {
     this.state = State.SINKING;
     this._sinkT = 0;
+    // A ship broken in half by a keel hit or a magazine blast goes fast; one
+    // that finally loses the fight with flooding settles slowly and heels over.
+    this._sinkFast = this.damage.catastrophic;
   }
 
   update(dt, ctx) {
     const { playerPos, elapsed, fireWeapon, getWaveHeight } = ctx;
 
+    // Fires/flooding/damage-control progression (may flip alive -> false and
+    // trip onDestroyed on its own, without any new incoming round).
+    this.updateDamage(dt);
+
     if (this.state === State.SINKING) {
       this._sinkT += dt;
-      this.group.rotation.z += dt * 0.15;
-      this.group.position.y -= dt * 1.4;
-      this.group.rotation.x += dt * 0.05;
-      if (this._sinkT > 8) this.destroyed = true;
+      const rate = this._sinkFast ? 2.6 : 1.0;
+      this.group.rotation.z += dt * (this._sinkFast ? 0.32 : 0.15) * this.damage.listSign;
+      this.group.position.y -= dt * 1.4 * rate;
+      this.group.rotation.x += dt * (this._sinkFast ? 0.12 : 0.05);
+      if (this._sinkT > (this._sinkFast ? 5 : 11)) this.destroyed = true;
       return;
     }
 
     const distToPlayer = this.physics.position.distanceTo(playerPos);
+    const dmg = this.damage;
+    // Wrecked sensors mean she loses the picture and can't open an engagement
+    // until you're much closer — a real, visible consequence of a bridge or
+    // superstructure hit rather than a hidden stat.
+    const sense = dmg.sensorFactor;
+    const engageRange = this.engageRangeM * sense;
 
     if (this.state === State.PATROL) {
-      if (this.iff !== 'FRIENDLY' && distToPlayer < this.engageRangeM) {
+      if (this.iff !== 'FRIENDLY' && distToPlayer < engageRange) {
         this.state = State.ENGAGE;
       } else if (this.patrolPoints.length) {
         const target = this.patrolPoints[this._patrolIdx];
@@ -180,28 +203,50 @@ export class EnemyShip extends Entity {
     } else if (this.state === State.ENGAGE) {
       if (this.iff === 'FRIENDLY') {
         this.state = State.PATROL;
-      } else if (distToPlayer > this.engageRangeM * 1.35) {
+      } else if (distToPlayer > engageRange * 1.35) {
         this.state = State.PATROL;
       } else {
         const desiredRange = this.gunRangeM * 0.75;
-        const throttle = distToPlayer > desiredRange ? 0.85 : distToPlayer < desiredRange * 0.6 ? -0.3 : 0.15;
+        let throttle = distToPlayer > desiredRange ? 0.85 : distToPlayer < desiredRange * 0.6 ? -0.3 : 0.15;
+        // Mission-killed ships stop maneuvering to fight and just try to survive.
+        if (dmg.missionKill) throttle = Math.min(throttle, 0.25);
         this._steerToward(playerPos, throttle);
 
-        this._gunCooldown -= dt;
-        if (distToPlayer < this.gunRangeM && this._gunCooldown <= 0) {
-          this._gunCooldown = 1.4 + Math.random() * 0.8;
-          fireWeapon('enemyShell', this._muzzleWorld(), playerPos.clone(), this);
-        }
-        this._missileCooldown -= dt;
-        if (distToPlayer < this.missileRangeM && this._missileCooldown <= 0) {
-          this._missileCooldown = 14 + Math.random() * 10;
-          fireWeapon('enemyMissile', this._muzzleWorld(), playerPos.clone(), this);
+        // Firepower kill: fire control / mounts wrecked = she stops shooting.
+        // Degraded (but not dead) fire control just slows her rate of fire.
+        if (dmg.weaponsOnline) {
+          const rofPenalty = 1 / dmg.fireControlFactor;
+          this._gunCooldown -= dt;
+          if (distToPlayer < this.gunRangeM * sense && this._gunCooldown <= 0) {
+            this._gunCooldown = (1.4 + Math.random() * 0.8) * rofPenalty;
+            fireWeapon('enemyShell', this._muzzleWorld(), playerPos.clone(), this);
+          }
+          this._missileCooldown -= dt;
+          if (distToPlayer < this.missileRangeM * sense && this._missileCooldown <= 0) {
+            this._missileCooldown = (14 + Math.random() * 10) * rofPenalty;
+            fireWeapon('enemyMissile', this._muzzleWorld(), playerPos.clone(), this);
+          }
         }
       }
     }
 
+    // Propulsion damage and flooding drag cap how much way she can make; a
+    // steering casualty makes her sluggish on the rudder. Both are applied to
+    // the physics command that was just set, so every AI branch is covered.
+    const speedCap = dmg.speedFactor;
+    this.physics.setCommand(
+      THREE.MathUtils.clamp(this.physics.throttle, -speedCap, speedCap),
+      this.physics.rudder * dmg.turnFactor
+    );
+
     this.physics.update(dt, getWaveHeight, elapsed);
     this.physics.applyToObject3D(this.group);
+    // Asymmetric flooding = a visible list. Applied on top of the wave-driven
+    // roll the physics just wrote, so a flooding ship visibly lies over.
+    if (dmg.list !== 0) {
+      this.group.rotateZ(dmg.list);
+      this.group.position.y -= dmg.flooding * 1.6;
+    }
     this.position.copy(this.physics.position);
     this.heading = this.physics.heading;
   }

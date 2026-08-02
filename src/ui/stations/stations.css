@@ -172,19 +172,30 @@
   bottom: 28px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: 250px;
+  gap: 5px;
+  width: 268px;
   z-index: 21;
+  max-height: min(420px, 52vh);
+  overflow: auto;
 }
 .stn-weapon-slot {
   display: grid;
   grid-template-columns: 28px 1fr auto;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: 1px solid var(--c-border);
   background: var(--c-bg-panel);
   transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.stn-weapon-name { font-size: 12px; }
+.stn-weapon-role { font-size: 9px; letter-spacing: 0.06em; }
+.stn-wpn-zoom {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--c-text-dim);
 }
 .stn-weapon-slot.is-selected {
   border-color: var(--c-amber);
@@ -520,6 +531,11 @@
   stroke: var(--c-red);
   filter: drop-shadow(0 0 5px rgba(255, 68, 68, 0.55));
 }
+.stn-weapons-reticle.is-acquiring svg {
+  stroke: var(--c-amber);
+  filter: drop-shadow(0 0 6px rgba(255, 176, 46, 0.7));
+  animation: stn-reticle-pulse 0.7s ease-in-out infinite;
+}
 .stn-weapons-reticle.is-locked svg {
   stroke: var(--c-red);
   filter: drop-shadow(0 0 8px rgba(255, 68, 68, 0.85));
@@ -608,122 +624,355 @@
   to { width: 100%; opacity: 0.15; }
 }
 
-/* ---- TAO: GCCS-M-style Common Operational Picture terminal ----
-   Deliberately distinct chrome from the rest of the cyan/amber sci-fi HUD: a flat
-   blue-grey "workstation" look (title bar, square panel, chart-not-scope canvas) to
-   read as a real fused C2 terminal rather than another stylized sensor console. Real
-   GCCS-M is a chart/map COP display, not a circular sweep radar. */
+/* ==========================================================================
+   TAO — GCCS-M workstation replica
+   ==========================================================================
+   Deliberately NOT the cyan/amber sci-fi HUD used everywhere else. A real
+   GCCS-M terminal is an X11/Motif-lineage C2 application: classification
+   banners top and bottom, a grey-blue title bar, a text menu bar, a row of
+   small square tool buttons, a framed geo plot, and a dense status bar. The
+   palette below is grey-blue workstation chrome with MIL-STD-2525 affiliation
+   colours reserved strictly for track symbology, so colour on this screen
+   always means "affiliation" and never "decoration".
+   -------------------------------------------------------------------------- */
 .stn-gccsm {
   position: absolute;
-  inset: 110px 22px 28px 22px;
+  inset: var(--stn-content-top, 110px) 22px 28px 22px;
   display: flex;
-  gap: 14px;
+  gap: 10px;
+  /* Critical: station-overlay children default to pointer-events:none — without
+     this the Motif chart never receives click/hover and the mouse looks dead. */
+  pointer-events: auto;
+  --gx-chrome:   #232e35;
+  --gx-chrome-2: #1a232a;
+  --gx-face:     #2b3841;
+  --gx-line:     rgba(146, 178, 192, 0.34);
+  --gx-line-hi:  rgba(178, 214, 228, 0.6);
+  --gx-text:     #c6dde6;
+  --gx-text-dim: #8ba7b3;
+  --gx-friend:   #4de8ff;
+  --gx-hostile:  #ff4d4d;
+  --gx-neutral:  #3dff8f;
+  --gx-unknown:  #ffdf3d;
+}
+.stn-gccsm .gccsm-tool,
+.stn-gccsm .gccsm-canvas,
+.stn-gccsm .gccsm-row,
+.stn-gccsm .stn-contact-list-body {
+  pointer-events: auto;
+  cursor: default;
+}
+.stn-gccsm .gccsm-canvas {
+  cursor: crosshair;
 }
 /* .stn-radar-side is normally absolutely-positioned (RADAR/SONAR use it standalone) —
    reused here as a flex child instead, so it needs to give up that positioning or it
    escapes the flex row and lands back on top of the chart at the same left:22px. */
 .stn-gccsm .stn-radar-side {
   position: static;
-  width: 320px;
+  width: 326px;
   flex: none;
   top: auto; left: auto; bottom: auto;
+  gap: 8px;
 }
+
+/* ---- window chrome ---- */
 .gccsm-window {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 0;
   overflow: hidden;
-  border-color: rgba(140, 175, 190, 0.4);
-  background: #0d171b;
+  background: var(--gx-chrome-2);
+  border: 1px solid var(--gx-line);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 10px 40px rgba(0, 0, 0, 0.55);
+  font-family: var(--font-mono);
+}
+/* Classification banner — the single most characteristic feature of any DoD C2
+   display. Repeated top and bottom of the window, exactly as fielded. */
+.gccsm-classbar {
+  flex: none;
+  background: #8f1414;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-align: center;
+  padding: 3px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .gccsm-titlebar {
+  flex: none;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 7px 12px;
-  background: linear-gradient(180deg, #26424c, #1a2e35);
-  border-bottom: 1px solid rgba(140, 190, 205, 0.35);
-  font-family: var(--font-mono);
+  gap: 10px;
+  padding: 5px 8px;
+  background: linear-gradient(180deg, #38525f 0%, #223842 60%, #1d3039 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.55);
+}
+.gccsm-winicon {
+  width: 11px; height: 11px; flex: none;
+  border: 1px solid var(--gx-line-hi);
+  background: linear-gradient(135deg, #5f8b9c, #24343c);
 }
 .gccsm-wintitle {
   font-size: 11px;
-  letter-spacing: 0.1em;
-  color: #cdeaf2;
+  letter-spacing: 0.06em;
+  color: #e2f2f8;
   font-weight: 700;
+  white-space: nowrap;
 }
 .gccsm-winmeta {
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: rgba(205, 234, 242, 0.55);
+  flex: 1;
+  min-width: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  color: rgba(226, 242, 248, 0.6);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.gccsm-winbtns { display: flex; gap: 3px; flex: none; }
+.gccsm-winbtns i {
+  width: 14px; height: 13px;
+  display: grid; place-items: center;
+  font-style: normal;
+  font-size: 8px;
+  line-height: 1;
+  color: #d6e9f0;
+  background: var(--gx-face);
+  border: 1px solid;
+  border-color: rgba(255,255,255,0.22) rgba(0,0,0,0.5) rgba(0,0,0,0.5) rgba(255,255,255,0.22);
+}
+.gccsm-menubar {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 2px 6px;
+  background: var(--gx-chrome);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+}
+.gccsm-menubar span {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--gx-text);
+  padding: 2px 7px;
+}
+.gccsm-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 6px;
+  background: var(--gx-chrome);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+.gccsm-tool {
+  cursor: pointer;
+  font: 9px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--gx-text-dim);
+  background: var(--gx-face);
+  border: 1px solid;
+  border-color: rgba(255,255,255,0.20) rgba(0,0,0,0.55) rgba(0,0,0,0.55) rgba(255,255,255,0.20);
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+.gccsm-tool:hover { background: #35454f; color: var(--gx-text); }
+.gccsm-tool:active,
+.gccsm-tool.is-on {
+  color: #d8f2fb;
+  background: #15343f;
+  border-color: rgba(0,0,0,0.55) rgba(255,255,255,0.16) rgba(255,255,255,0.16) rgba(0,0,0,0.55);
+}
+.gccsm-toolsep {
+  width: 1px;
+  align-self: stretch;
+  margin: 1px 4px;
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+.gccsm-toolstatus {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--gx-text-dim);
+  padding-right: 4px;
+  white-space: nowrap;
+}
+.gccsm-toolstatus.is-hooked { color: #fff; }
+
 .gccsm-chartwrap {
   position: relative;
   flex: 1;
   min-height: 0;
+  background: #04141d;
+  border-top: 1px solid rgba(0, 0, 0, 0.6);
 }
 .gccsm-canvas {
   display: block;
   width: 100%;
   height: 100%;
 }
-.gccsm-scalebar {
-  position: absolute;
-  left: 10px;
-  bottom: 8px;
-  font: 10px var(--font-mono);
-  letter-spacing: 0.06em;
-  color: rgba(200, 230, 238, 0.7);
-  background: rgba(6, 14, 18, 0.55);
-  padding: 2px 6px;
-}
 .gccsm-legend {
   position: absolute;
-  right: 10px;
-  bottom: 8px;
+  right: 8px;
+  top: 8px;
   display: flex;
-  gap: 12px;
-  font: 9px var(--font-mono);
-  letter-spacing: 0.05em;
-  color: rgba(200, 230, 238, 0.75);
-  background: rgba(6, 14, 18, 0.55);
-  padding: 4px 8px;
+  flex-direction: column;
+  gap: 4px;
+  font: 8.5px var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--gx-text-dim);
+  background: rgba(4, 20, 29, 0.82);
+  border: 1px solid var(--gx-line);
+  padding: 5px 8px;
 }
-.gccsm-legend span { display: flex; align-items: center; gap: 5px; }
+.gccsm-legend span { display: flex; align-items: center; gap: 6px; }
+/* Legend swatches mirror the 2525 surface frames drawn on the canvas. */
 .gccsm-lg-shape {
-  width: 10px; height: 10px; display: inline-block;
-  border: 1.6px solid currentColor;
+  width: 9px; height: 9px; display: inline-block;
+  border: 1.4px solid currentColor;
   flex: none;
 }
-.gccsm-lg-shape.friend { border-radius: 50%; color: #5aa8ff; }
-.gccsm-lg-shape.hostile { transform: rotate(45deg); color: #ff5a5a; }
-.gccsm-lg-shape.unknown { color: #d8dde0; }
-.gccsm-databar {
-  padding: 7px 12px;
-  border-top: 1px solid rgba(140, 190, 205, 0.35);
-  background: #101c21;
-  font: 11px var(--font-mono);
-  letter-spacing: 0.05em;
-  color: #a8d8e5;
+.gccsm-lg-shape.friend   { border-radius: 50%; color: var(--gx-friend); }
+.gccsm-lg-shape.hostile  { transform: rotate(45deg); color: var(--gx-hostile); }
+.gccsm-lg-shape.neutral  { color: var(--gx-neutral); }
+.gccsm-lg-shape.unknown  { border-radius: 40%; color: var(--gx-unknown); }
+
+.gccsm-statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--gx-chrome);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
-.gccsm-tracktable .stn-contact-list-body { gap: 2px; }
+.gccsm-statusbar span {
+  font: 9.5px var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--gx-text-dim);
+  padding: 4px 9px;
+  border-right: 1px solid rgba(0, 0, 0, 0.45);
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+}
+.gccsm-statusbar span:first-child { flex: none; color: var(--gx-text); }
+.gccsm-statusbar span:last-child { border-right: none; box-shadow: none; margin-left: auto; }
+
+/* ---- side column panes (same workstation chrome as the window) ---- */
+.gccsm-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--gx-chrome-2);
+  border: 1px solid var(--gx-line);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  font-family: var(--font-mono);
+}
+.gccsm-pane.gccsm-tracktable { flex: 1; }
+.gccsm-panehead {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  background: linear-gradient(180deg, #38525f, #223842);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #e2f2f8;
+}
+.gccsm-panehead span {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: rgba(226, 242, 248, 0.55);
+}
+.gccsm-panebody { padding: 8px 10px 10px; }
+.stn-gccsm .stn-tao-status { margin-top: 0; }
+.stn-gccsm .stn-hint { color: var(--gx-text-dim); }
+
+.gccsm-tracktable .stn-contact-list-body {
+  flex: 1;
+  min-height: 0;
+  margin-top: 0;
+  gap: 0;
+  overflow: hidden;
+}
 .gccsm-table-head {
   display: grid;
-  grid-template-columns: 1.6fr 0.8fr 0.6fr 0.6fr 0.7fr;
-  gap: 6px;
-  padding: 0 8px;
-  margin-top: 6px;
-  font: 9px var(--font-mono);
-  letter-spacing: 0.08em;
-  color: var(--c-text-faint);
+  grid-template-columns: 0.9fr 0.75fr 0.7fr 0.6fr 0.65fr 0.6fr 0.5fr;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #162026;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  font: 8.5px var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--gx-text-dim);
 }
 .gccsm-row {
   display: grid !important;
-  grid-template-columns: 1.6fr 0.8fr 0.6fr 0.6fr 0.7fr;
+  grid-template-columns: 0.9fr 0.75fr 0.7fr 0.6fr 0.65fr 0.6fr 0.5fr;
+  gap: 4px;
+  padding: 3px 8px !important;
+  font-size: 10px;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  color: var(--gx-text-dim);
 }
-.gccsm-row span:first-child { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gccsm-row .gccsm-lg-shape { width: 8px; height: 8px; flex: none; }
+.gccsm-row:nth-child(even) { background: rgba(255, 255, 255, 0.022); }
+.gccsm-row:hover { background: rgba(120, 200, 225, 0.10); color: var(--gx-text); }
+.gccsm-row.is-selected {
+  background: #1d4557 !important;
+  border-left-color: #fff;
+  color: #eaf7fc;
+}
+.gccsm-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gccsm-tn { color: var(--gx-text); }
+.gccsm-row.is-selected .gccsm-tn { color: #fff; font-weight: 700; }
+.gccsm-affil.friend  { color: var(--gx-friend); }
+.gccsm-affil.hostile { color: var(--gx-hostile); }
+.gccsm-affil.neutral { color: var(--gx-neutral); }
+.gccsm-affil.unknown { color: var(--gx-unknown); }
+.gccsm-empty { grid-template-columns: 0.9fr 1fr !important; color: var(--gx-text-dim); }
+
+/* ---- hooked-track data block ---- */
+.gccsm-detail { flex: none; }
+.gccsm-detail-body {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 2px 8px;
+  padding: 7px 10px 9px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.gccsm-dk { color: var(--gx-text-dim); letter-spacing: 0.08em; }
+.gccsm-dv { color: var(--gx-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gccsm-dv b.friend  { color: var(--gx-friend); }
+.gccsm-dv b.hostile { color: var(--gx-hostile); }
+.gccsm-dv b.neutral { color: var(--gx-neutral); }
+.gccsm-dv b.unknown { color: var(--gx-unknown); }
+.gccsm-detail-body.is-empty { grid-template-columns: 1fr; }
+.gccsm-detail-none {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--gx-text-dim);
+  padding: 4px 0;
+}
+.gccsm-detail-none span {
+  display: block;
+  margin-top: 4px;
+  letter-spacing: 0.02em;
+  opacity: 0.65;
+  font-size: 9.5px;
+}
 
 /* enlarge tactical radar when manning the radar station */
 .tac-radar.stn-radar-focus {

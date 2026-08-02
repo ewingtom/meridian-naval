@@ -57,8 +57,11 @@ const STATION_DEFS = {
     // Full look-around — scan the whole horizon for threats, not just the bow arc.
     lookLimits: { yaw: Math.PI, pitchMin: -0.6, pitchMax: 0.55 },
     hideLayers: [2],
+    zoomable: true,
+    zoomMin: 18,
+    zoomMax: 52,
     promptText: 'Press E to man Weapons Station',
-    barText: 'WEAPONS — Track · Designate · Fire solution · E Leave',
+    barText: 'WEAPONS — Scan/R lock · Scroll zoom · 1–6 munitions · F Fire · E Leave',
     accent: '#ffb02e',
   },
   [Station.RADAR]: {
@@ -112,21 +115,16 @@ const STATION_DEFS = {
   },
   [Station.TAO]: {
     mountKey: 'tao',
-    // Command post: a high, near-vertical overview instead of a seated console shot —
-    // reads as "owns the whole tactical picture" rather than one more window seat, and
-    // is the physical home for the Task Force Net (C/V/B/N/M/Y) already usable from
-    // any station — manning TAO is where a captain/TAO would actually issue them.
+    // Command post: high overview of the task force — but the GCCS-M chart is the
+    // real interaction surface, so cursorMode releases pointer-lock (same as Radar).
     cameraMode: 'chase',
-    // Steep but NOT near-vertical: a straight-down offset makes the view direction
-    // nearly parallel to the world-up used by Matrix4.lookAt, which gimbal-locks and
-    // rolls the frame unpredictably. ~40° off vertical keeps the whole task force in
-    // frame while staying numerically stable.
     chaseOffset: new THREE.Vector3(0, 190, -210),
     chaseLookAhead: 40,
     fov: 62,
     lookLimits: { yaw: Math.PI, pitchMin: -1.2, pitchMax: 0.15 },
+    cursorMode: true,
     promptText: 'Press E to man TAO / CIC',
-    barText: 'TAO — Share · Weapons Free/Hold · Ping · Screen · Wilco · E Leave',
+    barText: 'TAO — Click a track to hook · Enter/Dbl-click to share · C/V/B Net · E Leave',
     accent: '#ffe9b0',
   },
 };
@@ -155,6 +153,7 @@ export class PlayerController {
     this.mouseSensScale = 1;
     this.invertY = false;
     this.lookoutZoom = 1;
+    this.weaponsZoom = 1;
     /** World-space point the weapons tactical camera slews toward (set by main). */
     this.trackTargetPos = null;
     /** Soft lock: keep tactical cam glued to trackTargetPos when true. */
@@ -225,7 +224,9 @@ export class PlayerController {
         def.zoomMax ?? 60
       );
       this.rig.fov = next;
-      this.lookoutZoom = (def.zoomMax ?? 55) / next;
+      const zoom = (def.zoomMax ?? 55) / next;
+      this.lookoutZoom = zoom;
+      this.weaponsZoom = zoom;
     }, { passive: false });
   }
 
@@ -320,6 +321,7 @@ export class PlayerController {
     this._applyStationLookLimits(name);
     this.onInteractPrompt(null);
     this.lookoutZoom = 1;
+    this.weaponsZoom = 1;
     this._applyStationLayers(name, true);
 
     const { pos, quat } = this._stationWorldPose(name);
@@ -351,6 +353,7 @@ export class PlayerController {
     this.walkYaw = Math.PI;
     this.walkPitch = -0.05;
     this.lookoutZoom = 1;
+    this.weaponsZoom = 1;
     this._applyStationLayers(prev, false);
 
     this.state = Station.TRANSITION;
