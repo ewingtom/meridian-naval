@@ -395,18 +395,31 @@
 
 /* RADAR owns left contact column + enlarged right radar — keep coop left of radar. */
 #ui-root[data-seat="RADAR"] .coop-panel,
-#ui-root[data-seat="SONAR"] .coop-panel,
-#ui-root[data-seat="TAO"] .coop-panel {
+#ui-root[data-seat="SONAR"] .coop-panel {
   right: auto;
   left: 340px;
   top: 110px;
   width: min(220px, 26vw);
 }
 #ui-root[data-seat="RADAR"] .comms-log,
-#ui-root[data-seat="SONAR"] .comms-log,
-#ui-root[data-seat="TAO"] .comms-log {
+#ui-root[data-seat="SONAR"] .comms-log {
   left: 340px;
   bottom: 28px;
+  width: min(280px, 28vw);
+}
+/* TAO's GCCS-M chart is full-width (left column + chart together span the whole
+   available area, unlike Radar/Sonar's narrower single-column layout), so the
+   left:340px dock used above would land on top of the chart. Dock top-right instead,
+   below the corner tactical-radar widget — same corner pattern already used for
+   Helm/Weapons below. */
+#ui-root[data-seat="TAO"] .coop-panel {
+  top: 300px;
+  right: 18px;
+}
+#ui-root[data-seat="TAO"] .comms-log {
+  right: 18px;
+  left: auto;
+  bottom: 18px;
   width: min(280px, 28vw);
 }
 

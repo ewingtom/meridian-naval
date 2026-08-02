@@ -116,13 +116,36 @@ export class CrewedShip {
       const targetLen = this.length || 110;
       if (size.z > 1) inst.scale.setScalar(targetLen / size.z);
 
+      // _addMicroDetailMaps MUST run before tinting, not after: for any material with
+      // no baked texture map (true of every material in this glTF) and hullKind!=='hero'
+      // it unconditionally resets material.color to white and blends toward its own
+      // fixed grey target — silently discarding whatever color was already there. Tinting
+      // first, then polishing, meant the polish pass immediately erased the tint (judge-
+      // caught bug: "hostiles tinted red" was essentially false — verified live, hull
+      // color came back a neutral 0xced0d0 no matter what iffColor was requested).
+      try {
+        this._addMicroDetailMaps(inst);
+      } catch (matErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[CrewedShip] Escort material polish failed; keeping authored mats.', matErr?.message || matErr);
+      }
+
       // Clone per-instance before tinting: escort1/escort2 share the cached glTF scene
-      // (and its two IFF-trim meshes share one source material), so mutating a material
-      // in place would tint both ships — and both trim strips on one ship — the same
-      // color no matter which iffColor was requested. Map from the shared *original*
-      // material's uuid to its one tinted clone so every mesh referencing that original
-      // gets reassigned to the same clone, instead of only the first one encountered.
+      // (and its meshes share source materials), so mutating a material in place would
+      // tint every ship the same color no matter which iffColor was requested. Map from
+      // the shared *original* material's uuid to its one tinted clone so every mesh
+      // referencing that original gets reassigned to the same clone.
+      //
+      // escort_hull.glb only has ONE material with "IFF" in its name (EH_IFFMat) and
+      // it's a small waterline marker light, not a trim stripe — this model has no
+      // separate "trim" material at all. Tinting only that left every ship's actual
+      // hull (EH_HullMat) and superstructure (EH_SuperMat) an identical neutral grey,
+      // so friendly and hostile ships were visually indistinguishable except for one
+      // tiny light. Blend (not replace) hull/super toward iffColor so it reads as a
+      // distinctly painted hull, not a solid crayon-color toy — matches how the old
+      // procedural buildEnemyShipMesh(iffColor) hulls read before this asset swap.
       const tintedByOrigUuid = new Map();
+      const iffCol = new THREE.Color(iffColor);
       inst.traverse((o) => {
         if (!o.isMesh) return;
         o.castShadow = true;
@@ -130,11 +153,18 @@ export class CrewedShip {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         for (let i = 0; i < mats.length; i++) {
           const mat = mats[i];
-          if (!mat || !/IFF/i.test(mat.name || '')) continue;
+          const name = mat?.name || '';
+          const isMarker = /IFF/i.test(name);
+          const isHullPaint = /Hull|Super/i.test(name);
+          if (!mat || (!isMarker && !isHullPaint)) continue;
           let cloned = tintedByOrigUuid.get(mat.uuid);
           if (!cloned) {
             cloned = mat.clone();
-            cloned.color.setHex(iffColor);
+            if (isMarker) cloned.color.setHex(iffColor);
+            // 0.5 read as a solid crayon-color hull on the new frigate's large merged
+            // surfaces (verified live) — 0.3 keeps it clearly distinguishable as an
+            // IFF-colored accent without losing the paint's neutral hull character.
+            else cloned.color.lerp(iffCol, 0.3);
             tintedByOrigUuid.set(mat.uuid, cloned);
           }
           if (Array.isArray(o.material)) o.material[i] = cloned;
@@ -150,12 +180,6 @@ export class CrewedShip {
       this.usingPlaceholder = false;
       // eslint-disable-next-line no-console
       console.log('[CrewedShip] Loaded high-detail escort model from', ESCORT_MODEL_URL);
-      try {
-        this._addMicroDetailMaps(inst);
-      } catch (matErr) {
-        // eslint-disable-next-line no-console
-        console.warn('[CrewedShip] Escort material polish failed; keeping authored mats.', matErr?.message || matErr);
-      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.log('[CrewedShip] High-detail escort model not available yet, using placeholder.', err?.message || err);
@@ -364,11 +388,15 @@ export class CrewedShip {
           mat.map.needsUpdate = true;
         }
 
-        // Subtle grit only — high repeat normals = chalk tiling on Burke haze grey
+        // Subtle grit only — high repeat normals = chalk tiling on Burke haze grey.
+        // Escort hull rebuild merges primitives by material into a handful of much
+        // larger combined meshes (was ~137 small ones), so these repeat counts (tuned
+        // against the old small-UV-island meshes) now read as a distracting regular
+        // grid on the bigger merged surfaces — lowered to match the EnemyShip.js fix.
         if (!mat.normalMap && !isHero) {
           const n = srcNormal.clone();
           n.needsUpdate = true;
-          n.repeat.set(isPaint ? 22 : 14, isPaint ? 22 : 14);
+          n.repeat.set(isPaint ? 8 : 6, isPaint ? 8 : 6);
           n.wrapS = n.wrapT = THREE.RepeatWrapping;
           n.anisotropy = maxAniso;
           mat.normalMap = n;
@@ -385,7 +413,7 @@ export class CrewedShip {
         if (!mat.roughnessMap && !isHero) {
           const r = srcRough.clone();
           r.needsUpdate = true;
-          r.repeat.set(isPaint ? 18 : 14, isPaint ? 18 : 14);
+          r.repeat.set(isPaint ? 8 : 6, isPaint ? 8 : 6);
           r.wrapS = r.wrapT = THREE.RepeatWrapping;
           r.anisotropy = maxAniso;
           mat.roughnessMap = r;

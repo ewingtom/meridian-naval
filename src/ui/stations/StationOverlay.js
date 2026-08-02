@@ -55,6 +55,7 @@ export class StationOverlay {
     this.onRangeChange = null;
     this.onSelectContact = null; // (id) => void — click a contact row
     this.onDesignate = null; // () => void — double-click / Enter pathway from UI
+    this._lastListUpdate = 0; // throttles the innerHTML-rebuilding stations, see update()
   }
 
   mount(container = document.getElementById('ui-root')) {
@@ -207,19 +208,41 @@ export class StationOverlay {
       </div>
 
       <div class="stn-panel" data-panel="TAO" hidden>
-        <div class="stn-radar-side">
-          <div class="stn-radar-tools hud-panel">
+        <div class="stn-gccsm">
+          <div class="gccsm-window hud-panel">
             <div class="hud-corners"></div>
-            <div class="hud-label">Task Force Net</div>
-            <div class="stn-tao-status" data-tao="status">WEAPONS HOLD · NO SHARED TRACK</div>
-            <div class="stn-hint" style="margin-top:6px">
-              <kbd>C</kbd> Share · <kbd>V</kbd> Free · <kbd>B</kbd> Hold · <kbd>N</kbd> Ping · <kbd>M</kbd> Screen · <kbd>Y</kbd> Wilco
+            <div class="gccsm-titlebar">
+              <span class="gccsm-wintitle">GCCS-M — COMMON OPERATIONAL PICTURE</span>
+              <span class="gccsm-winmeta" data-tao="unit">UNIT: FS MERIDIAN (DDG) · TRACK MGR</span>
             </div>
+            <div class="gccsm-chartwrap">
+              <canvas class="gccsm-canvas"></canvas>
+              <div class="gccsm-scalebar" data-tao="scale">RNG --</div>
+              <div class="gccsm-legend">
+                <span><i class="gccsm-lg-shape friend"></i>FRIEND</span>
+                <span><i class="gccsm-lg-shape hostile"></i>HOSTILE</span>
+                <span><i class="gccsm-lg-shape unknown"></i>UNK/NEUT</span>
+              </div>
+            </div>
+            <div class="gccsm-databar" data-tao="databar">SELECT A TRACK FOR DATA BLOCK</div>
           </div>
-          <div class="stn-contact-list hud-panel">
-            <div class="hud-corners"></div>
-            <div class="hud-label">Tactical Overview — All Contacts</div>
-            <div class="stn-contact-list-body" data-tao="list"></div>
+          <div class="stn-radar-side">
+            <div class="stn-radar-tools hud-panel">
+              <div class="hud-corners"></div>
+              <div class="hud-label">Task Force Net</div>
+              <div class="stn-tao-status" data-tao="status">WEAPONS HOLD · NO SHARED TRACK</div>
+              <div class="stn-hint" style="margin-top:6px">
+                <kbd>C</kbd> Share · <kbd>V</kbd> Free · <kbd>B</kbd> Hold · <kbd>N</kbd> Ping · <kbd>M</kbd> Screen · <kbd>Y</kbd> Wilco
+              </div>
+            </div>
+            <div class="stn-contact-list hud-panel gccsm-tracktable">
+              <div class="hud-corners"></div>
+              <div class="hud-label">Track Table</div>
+              <div class="gccsm-table-head">
+                <span>TRACK</span><span>AFFIL</span><span>DOM</span><span>BRG</span><span>RNG</span>
+              </div>
+              <div class="stn-contact-list-body" data-tao="list"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -296,7 +319,18 @@ export class StationOverlay {
     this._tao = {
       status: this.root.querySelector('[data-tao="status"]'),
       list: this.root.querySelector('[data-tao="list"]'),
+      canvas: this.root.querySelector('.gccsm-canvas'),
+      scale: this.root.querySelector('[data-tao="scale"]'),
+      databar: this.root.querySelector('[data-tao="databar"]'),
     };
+    this._taoCtx = this._tao.canvas.getContext('2d');
+    this._taoDpr = Math.min(window.devicePixelRatio || 1, 2);
+    this._taoSelectedId = null;
+    this._taoLastContacts = [];
+    this._taoRangeM = 9000;
+    this._resizeTaoCanvas();
+    window.addEventListener('resize', () => this._resizeTaoCanvas());
+    this._tao.canvas.addEventListener('click', (e) => this._onTaoCanvasClick(e));
 
     // Telegraph notches (clickable)
     this._helm.notches.innerHTML = ORDER_NOTCHES.map((o) =>
@@ -352,11 +386,21 @@ export class StationOverlay {
   update(state = {}) {
     if (!this._mounted || !this._station) return;
 
-    if (this._station === 'HELM') this._updateHelm(state);
-    else if (this._station === 'WEAPONS') this._updateWeapons(state);
+    if (this._station === 'HELM') { this._updateHelm(state); return; }
+    if (this._station === 'LOOKOUT') { this._updateLookout(state); return; }
+
+    // WEAPONS/RADAR/SONAR/TAO all rebuild a contact-list (or weapon-rack) innerHTML
+    // from scratch on every call — real DOM churn (destroy+recreate every row, forced
+    // layout) that doesn't need to run at 60Hz: a radar contact list refreshing 10x/sec
+    // is imperceptible, and this measurably cut frame cost while seated. Not applied to
+    // Helm/Lookout above, which only touch cheap textContent/style/classList.
+    const now = performance.now();
+    if (now - this._lastListUpdate < 100) return;
+    this._lastListUpdate = now;
+
+    if (this._station === 'WEAPONS') this._updateWeapons(state);
     else if (this._station === 'RADAR') this._updateRadar(state);
     else if (this._station === 'SONAR') this._updateSonar(state);
-    else if (this._station === 'LOOKOUT') this._updateLookout(state);
     else if (this._station === 'TAO') this._updateTao(state);
   }
 
@@ -552,6 +596,11 @@ export class StationOverlay {
     }
   }
 
+  /** TAO's console — a mocked-up GCCS-M terminal (the real fused Common Operational
+   * Picture workstation a CIC/TAO actually references) instead of a stylized sweep
+   * radar: a north-up chart with own-ship centered, contacts drawn in real NTDS
+   * symbology (shape=affiliation, orientation=domain, color=IFF), a track table, and
+   * a selectable data block — see gccsm-* CSS/canvas code below for the chart itself. */
   _updateTao(s) {
     const st = s.taskForceStatus || {};
     if (this._tao.status) {
@@ -560,20 +609,167 @@ export class StationOverlay {
       this._tao.status.textContent = `${policy} · ${track}`;
       this._tao.status.classList.toggle('is-free', st.weaponsPolicy === 'free');
     }
-    const contacts = s.allContacts || [];
-    const rows = contacts.slice(0, 16).map((c) => {
+    const contacts = (s.allContacts || []).filter((c) => !c.isWaypoint);
+    this._taoLastContacts = contacts;
+    this._taoSelectedId = s.selectedTargetId ?? this._taoSelectedId;
+    if (s.rangeM) this._taoRangeM = Math.max(s.rangeM, 4000);
+
+    const rows = contacts.slice(0, 20).map((c) => {
       const iff = (c.iff || 'unknown').toLowerCase();
       const dom = (c.domain || '').toString().slice(0, 4).toUpperCase();
-      return `<div class="stn-contact-row ${c.id === s.selectedTargetId ? 'is-selected' : ''} ${c.isWaypoint ? 'is-nav' : ''}" data-contact-id="${c.id}" role="button" tabindex="0">
-        <span class="stn-contact-dot ${iff}"></span>
-        <span>${c.name || c.id} <em>${dom}</em></span>
-        <span>${c.distanceM != null ? formatDistance(c.distanceM) : ''}</span>
+      const brg = c.x != null && c.z != null
+        ? formatBearing(((Math.atan2(c.x, c.z) * 180) / Math.PI + 360) % 360)
+        : '---';
+      return `<div class="stn-contact-row gccsm-row ${c.id === this._taoSelectedId ? 'is-selected' : ''}" data-contact-id="${c.id}" role="button" tabindex="0">
+        <span><i class="gccsm-lg-shape ${iff === 'friendly' ? 'friend' : iff === 'hostile' ? 'hostile' : 'unknown'}"></i>${c.name || c.id}</span>
+        <span>${iff.toUpperCase().slice(0, 4)}</span>
+        <span>${dom}</span>
+        <span>${brg}°</span>
+        <span>${c.distanceM != null ? formatDistance(c.distanceM) : '---'}</span>
       </div>`;
     });
     this._tao.list.innerHTML = rows.length
       ? rows.join('')
-      : `<div class="stn-contact-row"><span></span><span>PICTURE CLEAR</span><span></span></div>`;
+      : `<div class="stn-contact-row"><span>PICTURE CLEAR</span><span></span><span></span><span></span><span></span></div>`;
     this._wireContactList(this._tao.list);
+
+    const selected = contacts.find((c) => c.id === this._taoSelectedId);
+    if (this._tao.databar) {
+      if (selected) {
+        const brg = selected.x != null ? formatBearing(((Math.atan2(selected.x, selected.z) * 180) / Math.PI + 360) % 360) : '---';
+        this._tao.databar.textContent =
+          `TRACK ${selected.name || selected.id} · ${(selected.iff || '?').toUpperCase()} ${(selected.domain || '?').toUpperCase()} · BRG ${brg}° RNG ${selected.distanceM != null ? formatDistance(selected.distanceM) : '---'}`;
+      } else {
+        this._tao.databar.textContent = 'SELECT A TRACK FOR DATA BLOCK';
+      }
+    }
+    if (this._tao.scale) this._tao.scale.textContent = `RNG ${(this._taoRangeM / 1000).toFixed(1)}KM`;
+
+    this._drawGccsmChart(s.heading || 0);
+  }
+
+  _resizeTaoCanvas() {
+    if (!this._tao?.canvas) return;
+    const wrap = this._tao.canvas.parentElement;
+    const w = wrap.clientWidth || 420;
+    const h = wrap.clientHeight || 300;
+    this._tao.canvas.width = w * this._taoDpr;
+    this._tao.canvas.height = h * this._taoDpr;
+    this._tao.canvas.style.width = `${w}px`;
+    this._tao.canvas.style.height = `${h}px`;
+    this._drawGccsmChart(0);
+  }
+
+  _onTaoCanvasClick(e) {
+    const rect = this._tao.canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const w = rect.width, h = rect.height;
+    const cx = w / 2, cy = h / 2;
+    const scale = (Math.min(w, h) / 2 - 20) / this._taoRangeM;
+    let best = null, bestD = 22; // px hit-radius
+    for (const c of this._taoLastContacts) {
+      if (c.x == null || c.z == null) continue;
+      const sx = cx + c.x * scale, sy = cy - c.z * scale;
+      const d = Math.hypot(px - sx, py - sy);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (best) {
+      this._taoSelectedId = best.id;
+      this.onSelectContact?.(best.id);
+    }
+  }
+
+  /** North-up chart (own-ship centered, NOT heading-up like a ship's own PPI sweep —
+   * GCCS-M is a fused command picture, plotted like a chart, not a sensor scope).
+   * NTDS symbology: circle=friend, diamond=hostile, square=unknown/neutral; a short
+   * tick above the shape marks AIR, below marks SUBSURFACE, none = SURFACE. */
+  _drawGccsmChart(ownHeadingDeg) {
+    const ctx = this._taoCtx;
+    if (!ctx) return;
+    const dpr = this._taoDpr;
+    const w = this._tao.canvas.width / dpr, h = this._tao.canvas.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0a1418';
+    ctx.fillRect(0, 0, w, h);
+
+    const cx = w / 2, cy = h / 2;
+    const R = Math.min(w, h) / 2 - 20;
+    const scale = R / this._taoRangeM;
+
+    // Chart grid — evenly spaced reference lines, not a radial sweep bezel.
+    ctx.strokeStyle = 'rgba(120, 190, 210, 0.14)';
+    ctx.lineWidth = 1;
+    const gridStep = 40;
+    for (let x = cx % gridStep; x < w; x += gridStep) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+    for (let y = cy % gridStep; y < h; y += gridStep) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+    // Range rings, labeled — the one concession to "radar-like", but square/chart-gridded
+    // rather than a bezel, and GCCS-M charts do show range rings around own-unit.
+    ctx.strokeStyle = 'rgba(120, 190, 210, 0.28)';
+    ctx.fillStyle = 'rgba(160, 210, 225, 0.55)';
+    ctx.font = '9px var(--font-mono, monospace)';
+    for (let i = 1; i <= 3; i++) {
+      const rr = (R / 3) * i;
+      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillText(`${((this._taoRangeM / 3) * i / 1000).toFixed(1)}k`, cx + 4, cy - rr + 10);
+    }
+    // Compass ticks (N/E/S/W) — north-up, always fixed, unlike a heading-up PPI.
+    ctx.fillStyle = 'rgba(180, 225, 235, 0.7)';
+    ctx.font = 'bold 10px var(--font-mono, monospace)';
+    ctx.textAlign = 'center';
+    ctx.fillText('N', cx, cy - R - 6);
+    ctx.fillText('S', cx, cy + R + 14);
+    ctx.fillText('E', cx + R + 10, cy + 3);
+    ctx.fillText('W', cx - R - 10, cy + 3);
+
+    // Own ship — a small oriented triangle at true heading (chart is north-up, so the
+    // own-ship glyph itself rotates, rather than the whole picture spinning under it).
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate((ownHeadingDeg * Math.PI) / 180);
+    ctx.fillStyle = '#4de8ff';
+    ctx.beginPath();
+    ctx.moveTo(0, -9); ctx.lineTo(6, 7); ctx.lineTo(0, 4); ctx.lineTo(-6, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    for (const c of this._taoLastContacts) {
+      if (c.x == null || c.z == null) continue;
+      const sx = cx + c.x * scale, sy = cy - c.z * scale;
+      if (sx < -20 || sx > w + 20 || sy < -20 || sy > h + 20) continue;
+      const iff = (c.iff || 'unknown').toLowerCase();
+      const domain = (c.domain || '').toString().toUpperCase();
+      const color = iff === 'hostile' ? '#ff5a5a' : iff === 'friendly' ? '#5aa8ff' : iff === 'neutral' ? '#5adf7a' : '#d8dde0';
+      const selected = c.id === this._taoSelectedId;
+      ctx.strokeStyle = color;
+      ctx.fillStyle = 'transparent';
+      ctx.lineWidth = selected ? 2.5 : 1.6;
+      const sz = 7;
+      ctx.beginPath();
+      if (iff === 'friendly') {
+        ctx.arc(sx, sy, sz, 0, Math.PI * 2);
+      } else if (iff === 'hostile') {
+        ctx.moveTo(sx, sy - sz); ctx.lineTo(sx + sz, sy); ctx.lineTo(sx, sy + sz); ctx.lineTo(sx - sz, sy); ctx.closePath();
+      } else {
+        ctx.rect(sx - sz * 0.85, sy - sz * 0.85, sz * 1.7, sz * 1.7);
+      }
+      ctx.stroke();
+      if (domain === 'AIR') {
+        ctx.beginPath(); ctx.moveTo(sx, sy - sz - 2); ctx.lineTo(sx, sy - sz - 8); ctx.stroke();
+      } else if (domain === 'SUBSURFACE') {
+        ctx.beginPath(); ctx.moveTo(sx, sy + sz + 2); ctx.lineTo(sx, sy + sz + 8); ctx.stroke();
+      }
+      if (selected) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(sx, sy, sz + 5, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.fillStyle = color;
+      ctx.font = '9px var(--font-mono, monospace)';
+      ctx.textAlign = 'left';
+      ctx.fillText(c.name || c.id, sx + sz + 4, sy + 3);
+    }
   }
 
   _wireContactList(listEl) {

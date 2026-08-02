@@ -5,9 +5,16 @@ import * as THREE from 'three';
  * higher-command orders, and synthesizes AI-manned station chatter that creates
  * actionable player tasks — all anchored to real entity state (bearings, domains).
  */
-const ORDER_COOLDOWN = [48, 85];   // spaced — not frantic
-const CHATTER_COOLDOWN = [22, 40];
-const POP_CHECK_COOLDOWN = [35, 55];
+// Slowed down per direct player feedback: the scripted MissionSystem beats and this
+// living-world director both spawn hostiles independently, with no coordination
+// between them, so tight cooldowns meant they'd sometimes land close together and
+// dump multiple contacts on the player at once. Longer, wider cooldowns (plus a much
+// longer quiet opening window in start(), and lower spawn odds in
+// _maintainPopulation below) give the player room to handle one thing before the
+// next shows up.
+const ORDER_COOLDOWN = [90, 150];
+const CHATTER_COOLDOWN = [35, 55];
+const POP_CHECK_COOLDOWN = [70, 100];
 
 function randRange([a, b]) {
   return a + Math.random() * (b - a);
@@ -45,9 +52,12 @@ export class DynamicOps {
 
   start() {
     this.started = true;
-    this._orderAt = 22 + Math.random() * 12;
-    this._chatterAt = 10 + Math.random() * 8;
-    this._popAt = 28 + Math.random() * 12;
+    // Longer quiet opening window — the player just got underway and is still
+    // learning the stations/controls; the first DynamicOps-driven contact/order
+    // shouldn't land on top of the scripted mission's own first encounter.
+    this._orderAt = 75 + Math.random() * 25;
+    this._chatterAt = 25 + Math.random() * 15;
+    this._popAt = 60 + Math.random() * 20;
     const origin = this.ships.player.group.position;
     this.world.spawnMerchantTraffic(origin);
     this.world.spawnHorizonTaskForce(origin);
@@ -91,8 +101,10 @@ export class DynamicOps {
     const subs = this.world.aliveOfType('SUBSURFACE');
     const air = this.world.aliveOfType('AIR');
 
-    // Soft floor — at most one domain top-up per population tick
-    if (hostiles.length < 1 && this.mission.beatIndex >= 1 && Math.random() < 0.45) {
+    // Soft floor — at most one domain top-up per population tick. Odds lowered so a
+    // check firing doesn't usually mean something new shows up — most ticks should
+    // do nothing, keeping the pacing gradual rather than a steady drip of contacts.
+    if (hostiles.length < 1 && this.mission.beatIndex >= 1 && Math.random() < 0.28) {
       this.world.spawnWave('wave1', playerPos);
       this.onComms({
         speaker: 'CIC',
@@ -100,11 +112,11 @@ export class DynamicOps {
         urgency: 'warning',
       });
       this.coop?.require('share');
-    } else if (subs.length < 1 && this.mission.beatIndex >= 2 && Math.random() < 0.3) {
+    } else if (subs.length < 1 && this.mission.beatIndex >= 2 && Math.random() < 0.18) {
       this.world.spawnWave('sub_roamer', playerPos);
-    } else if (air.length < 1 && this.mission.beatIndex >= 3 && Math.random() < 0.25) {
+    } else if (air.length < 1 && this.mission.beatIndex >= 3 && Math.random() < 0.15) {
       this.world.spawnWave('air_probe', playerPos);
-    } else if (merchants.length < 1 && Math.random() < 0.35) {
+    } else if (merchants.length < 1 && Math.random() < 0.25) {
       this.world.spawnMerchantTraffic(playerPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2000, 0, (Math.random() - 0.5) * 2000)));
     }
   }

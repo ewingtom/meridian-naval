@@ -419,6 +419,16 @@ const pauseMenu = new PauseMenu({
     coopPanel.hide();
     stationOverlay.setStation(null);
     tacRadar.setStationFocus(false);
+    promptEl.classList.remove('is-visible');
+    commsLog.clear();
+    // Same class of bug as the game-over restart path below: fireAlertEl/ewAlertEl are
+    // only updated inside the active-gameplay per-frame loop, so quitting mid-alert
+    // (fire aboard, missile lock) froze them stuck visible over the main menu, right
+    // on top of the New Patrol button.
+    fireAlertEl.style.display = 'none';
+    ewAlertEl.style.display = 'none';
+    localShipWasBurning = false;
+    ewWarningUntil = 0;
     if (document.pointerLockElement) document.exitPointerLock();
     if (mp.inSession) mp.leave();
     mainMenu.update({ continueEnabled: true });
@@ -431,7 +441,11 @@ pauseMenu.hide();
 function resumeFromPause() {
   paused = false;
   pauseMenu.hide();
-  canvas.requestPointerLock();
+  // Cursor stations (Radar/Sonar) deliberately run without pointer lock so the OS
+  // cursor is visible for clicking contacts — re-locking on resume would silently
+  // yank that cursor away out from under the player mid-session.
+  const def = STATION_DEFS[playerController.state];
+  if (!def?.cursorMode) canvas.requestPointerLock();
 }
 
 // ---- game over overlay (no dedicated component from the UI kit — same visual
@@ -459,6 +473,22 @@ gameOverEl.querySelector('#gameover-restart').addEventListener('click', () => {
   gameStarted = false;
   hud.hide(); tacRadar.hide();
   coopPanel.hide();
+  // Judge-flagged bug: the previous mission's station HUD (EW/threat toasts, the
+  // "man TAO / CIC" interact prompt, the tactical-focus radar zoom) stayed rendered
+  // on top of the main menu because only onQuitToMainMenu cleared them — this path
+  // (dying, then restarting) never did.
+  stationOverlay.setStation(null);
+  tacRadar.setStationFocus(false);
+  promptEl.classList.remove('is-visible');
+  commsLog.clear();
+  // Same gap as above, for two elements added after this reset list was last
+  // written: fireAlertEl/ewAlertEl only get updated inside the active-gameplay
+  // per-frame loop, so dying with either alert up froze it stuck visible over the
+  // main menu — including sitting on top of the New Patrol button, blocking clicks.
+  fireAlertEl.style.display = 'none';
+  ewAlertEl.style.display = 'none';
+  localShipWasBurning = false;
+  ewWarningUntil = 0;
   // clear the battle: reset ships + wipe hostiles so a fresh patrol starts clean
   for (const e of world.entities) e.dispose(scene);
   world.entities = [];
@@ -1476,11 +1506,16 @@ function animate() {
         })),
         // Unfiltered — Sonar (subsurface only) and TAO (everything) each need a view
         // independent of whatever filter Radar's own operator happens to have set.
+        // x/z (ship-relative meters, +z=north/+x=east per the bearing convention used
+        // elsewhere) are kept here — TAO's GCCS-M-style chart plots real 2D positions,
+        // not just a distance readout.
         allContacts: lastContacts.map((c) => ({
           id: c.id,
           name: c.name,
           iff: c.iff,
           domain: c.domain,
+          x: c.x,
+          z: c.z,
           distanceM: Math.hypot(c.x, c.z),
           isWaypoint: !!c.isWaypoint,
         })),

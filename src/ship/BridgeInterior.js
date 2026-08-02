@@ -402,9 +402,20 @@ export function buildBridgeInterior({ lite = false } = {}) {
   seatMarker(0, 12.9, 0x4de8ff);
   // Weapons/radar mount points are seat positions "behind" their console along its own
   // rotated -Z axis (mirrors how the unrotated helm mount sits ~1.9 back from its desk).
-  const weaponsMount = new THREE.Vector3(-5.6, 0, 12.5).add(new THREE.Vector3(0, 0, -1.9).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.5));
-  const radarMount = new THREE.Vector3(6.4, 0, 12.5).add(new THREE.Vector3(0, 0, -1.9).applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.5));
-  const sonarMount = new THREE.Vector3(-4.2, 0, 8.8).add(new THREE.Vector3(0, 0, -1.9).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.35));
+  // Seat-back distance along each console's own rotated axis (not a bare unrotated Z
+  // shift, which doesn't track a rotated console's actual forward direction). Was 1.9m
+  // — measured live in-browser (camera-to-nearest-console-mesh distance) at only ~0.5m
+  // to the trim/screen panel once the console's own ~1-1.5m desk depth is accounted
+  // for, filling the whole frame with a close-up of flat geometry instead of framing
+  // the screen. Matches Helm's much more generous, already-tuned clearance.
+  const SEAT_BACK = 3.3;
+  // Sonar's console sits much closer to the aft wall (z=8.8, vs. minZ=5.5) than
+  // Weapons/Radar — the shared 3.3m offset pushed its seat to z≈5.15, *through* the
+  // wall. Smaller dedicated distance keeps it inside the room with a safe margin.
+  const SONAR_SEAT_BACK = 2.1;
+  const weaponsMount = new THREE.Vector3(-5.6, 0, 12.5).add(new THREE.Vector3(0, 0, -SEAT_BACK).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.5));
+  const radarMount = new THREE.Vector3(6.4, 0, 12.5).add(new THREE.Vector3(0, 0, -SEAT_BACK).applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.5));
+  const sonarMount = new THREE.Vector3(-4.2, 0, 8.8).add(new THREE.Vector3(0, 0, -SONAR_SEAT_BACK).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.35));
   seatMarker(weaponsMount.x, weaponsMount.z, 0xffb02e);
   seatMarker(radarMount.x, radarMount.z, 0x4de8ff);
   seatMarker(8.2, 20.2, 0x3dffa0);

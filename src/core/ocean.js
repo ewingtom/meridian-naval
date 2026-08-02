@@ -20,11 +20,20 @@ function buildWaveGLSL() {
 
 const GERSTNER_FUNC = `
 // Returns displaced position + accumulates normal
-vec3 gerstner(vec3 p, float t, out vec3 tangent, out vec3 binormal) {
+vec3 gerstner(vec3 p, float t, vec3 camPos, out vec3 tangent, out vec3 binormal) {
   vec3 offset = vec3(0.0);
   tangent = vec3(1.0, 0.0, 0.0);
   binormal = vec3(0.0, 0.0, 1.0);
   float steepSum = 0.0;
+  // The ocean grid has fixed ~12.7-unit world-space vertex spacing (size/segments =
+  // 2800/220). The shortest wave components (wavelength 2.5-7.8) are at or below that
+  // grid's Nyquist limit everywhere, but it only reads as visible moiré/banding at a
+  // specific mid-distance band, where perspective foreshortening packs many grid cells
+  // into few screen pixels — near the ship the ripple is subtle and resolvable, at the
+  // hazy far horizon fog already hides it. Fade each wave's amplitude out with distance
+  // from camera, scaled to its own wavelength, so short components taper off before
+  // they can alias instead of surviving into that mid-distance band.
+  float distToCam = length(p.xz - camPos.xz);
   for (int i = 0; i < NUM_WAVES; i++) {
     vec2 dir = uWaveA[i].xy;
     float steepness = uWaveA[i].z;
@@ -33,7 +42,8 @@ vec3 gerstner(vec3 p, float t, out vec3 tangent, out vec3 binormal) {
     float k = 6.28318530718 / wavelength;
     float c = sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
     float f = k * (dot(dir, p.xz) - c * t * 3.0);
-    float a = steepness / k / float(NUM_WAVES) * 3.35;
+    float distFade = 1.0 - smoothstep(wavelength * 16.0, wavelength * 32.0, distToCam);
+    float a = steepness / k / float(NUM_WAVES) * 3.35 * mix(1.0, distFade, step(wavelength, 25.0));
     offset.x += dir.x * a * cos(f);
     offset.z += dir.y * a * cos(f);
     offset.y += a * sin(f) * 0.92;
@@ -75,7 +85,7 @@ void main() {
   vec3 worldXZ = pos + vec3(modelMatrix[3].x, 0.0, modelMatrix[3].z);
 
   vec3 tangent, binormal;
-  vec3 disp = gerstner(worldXZ, uTime, tangent, binormal);
+  vec3 disp = gerstner(worldXZ, uTime, uCamPos, tangent, binormal);
 
   // Hull bow mound — displace the water SURFACE (judge: stickers aren't fluid)
   float spd = clamp(uShipSpeed / 22.0, 0.0, 1.35);

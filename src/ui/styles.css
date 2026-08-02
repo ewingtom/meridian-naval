@@ -72,8 +72,12 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #df
   backdrop-filter: blur(6px);
 }
 
-/* Thin glowing corner brackets, decorative only. Add as a child <div class="hud-corners"> */
-.hud-corners { position: absolute; inset: 0; pointer-events: none; }
+/* Thin glowing corner brackets, decorative only. Add as a child <div class="hud-corners">.
+   !important is required: the #ui-root * { pointer-events: auto } rule above has ID
+   specificity and otherwise wins over this class rule, making the decorative overlay
+   (inset:0, covers its whole parent) silently swallow every click on the real controls
+   underneath it — this broke every settings/menu/HUD panel that uses .hud-corners. */
+.hud-corners { position: absolute; inset: 0; pointer-events: none !important; }
 .hud-corners::before,
 .hud-corners::after {
   content: '';
@@ -94,11 +98,12 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #df
   border-right: 2px solid var(--c-cyan);
 }
 
-/* Faint animated scanline texture. Add as a child <div class="hud-scanlines">. */
+/* Faint animated scanline texture. Add as a child <div class="hud-scanlines">.
+   Same #ui-root * specificity issue as .hud-corners above — needs !important. */
 .hud-scanlines {
   position: absolute;
   inset: 0;
-  pointer-events: none;
+  pointer-events: none !important;
   background: repeating-linear-gradient(
     to bottom,
     rgba(255, 255, 255, 0.035) 0px,

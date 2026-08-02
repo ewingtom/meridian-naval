@@ -31,6 +31,15 @@ export class Submarine extends Entity {
     try {
       const gltf = await new GLTFLoader().loadAsync(SUB_MODEL_URL);
       const inst = gltf.scene.clone(true);
+      // Same axis-convention bug as the hostile destroyer hull (see EnemyShip.js):
+      // the Blender export's true length axis is local Y (~94.8m span), not Z
+      // (~19.4m, hull diameter + sail height) — measuring "length" off the raw
+      // Z-extent without reconciling axes scaled the WHOLE model, sail included, by
+      // ~4.9x to fit a 19m span into 95m, leaving the boat standing ~465m tall on
+      // its tail, "completely vertical and visible above the water." Rotate +90°
+      // about X first so length lands on Z and up lands on Y, then measure/scale.
+      inst.rotation.x = Math.PI / 2;
+      inst.updateMatrixWorld(true);
       // Fit ~95m LOA into the procedural placeholder scale ballpark
       const box = new THREE.Box3().setFromObject(inst);
       const size = new THREE.Vector3();
@@ -38,6 +47,13 @@ export class Submarine extends Entity {
       const targetLen = 95;
       const s = targetLen / Math.max(size.z, 1);
       inst.scale.setScalar(s);
+      // Re-measure post-scale and drop the keel to the waterline reference (y=0 at
+      // this.depth=0) so _applyTransform's later position.set puts the hull at the
+      // intended depth instead of floating/sinking by whatever offset the model's
+      // own local origin happened to be authored at.
+      inst.updateMatrixWorld(true);
+      const box2 = new THREE.Box3().setFromObject(inst);
+      inst.position.y -= box2.min.y;
       inst.traverse((o) => {
         if (o.isMesh) {
           o.castShadow = true;

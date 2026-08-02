@@ -29,12 +29,14 @@ const STATION_DEFS = {
     // window seat, and gives a much better read on heading/turn radius than a fixed
     // bridge window ever could.
     cameraMode: 'chase',
-    // 3/4 elevated chase — lower than the old drone so superstructure/turrets fill the
-    // frame (judge: "gray wedge"). Slight lateral offset sells silhouette + wake.
-    chaseOffset: new THREE.Vector3(42, 38, -105),
+    // Elevated chase, centered directly astern (no lateral offset) rather than off
+    // to one side — reads as "following the ship" instead of an odd 3/4 shadow.
+    chaseOffset: new THREE.Vector3(0, 38, -105),
     chaseLookAhead: 18,
     fov: 62,
-    lookLimits: { yaw: Math.PI * 0.85, pitchMin: -0.55, pitchMax: 0.5 },
+    // Full look-around from the chase cam — watch the escorts, sky, or wake without
+    // being locked to a forward-biased window.
+    lookLimits: { yaw: Math.PI, pitchMin: -0.85, pitchMax: 0.7 },
     // Hide walkable BridgeInterior (layer 2) in chase — otherwise glass room + neon
     // consoles poke through the Burke exterior and read as a graybox flying bridge.
     hideLayers: [2],
@@ -46,11 +48,14 @@ const STATION_DEFS = {
     mountKey: 'weaponsStation',
     // Elevated tactical chase — tracks the designated contact when locked, otherwise
     // looks ahead of the bow. Distinct from helm's high drone and from a seated reticle.
+    // Centered directly astern, no lateral offset (matches the Helm fix — camera
+    // should sit behind the ship, not off to one side).
     cameraMode: 'tactical',
-    chaseOffset: new THREE.Vector3(32, 38, -88),
+    chaseOffset: new THREE.Vector3(0, 38, -88),
     chaseLookAhead: 120,
     fov: 46,
-    lookLimits: { yaw: 1.05, pitchMin: -0.4, pitchMax: 0.32 },
+    // Full look-around — scan the whole horizon for threats, not just the bow arc.
+    lookLimits: { yaw: Math.PI, pitchMin: -0.6, pitchMax: 0.55 },
     hideLayers: [2],
     promptText: 'Press E to man Weapons Station',
     barText: 'WEAPONS — Track · Designate · Fire solution · E Leave',
@@ -60,11 +65,22 @@ const STATION_DEFS = {
     mountKey: 'radar',
     // Nose into the console CRT — the tactical plot owns the picture, not the window.
     lookOffset: new THREE.Vector3(0.2, -0.85, 6.5),
+    // Matches the radar console's own rotation.y in BridgeInterior.js — rotates
+    // lookOffset to actually face the (angled) console instead of the bow.
+    consoleYaw: -0.5,
     fov: 40,
-    lookLimits: { yaw: 0.55, pitchMin: -0.55, pitchMax: 0.2 },
-    hideLayers: [2],
+    // A real, visible mouse cursor instead of pointer-lock free-look: the console's
+    // scope IS the interaction surface — click a contact row to select it, double-click
+    // (or Enter) to share it to the force. See _enterStation/_exitStation for the
+    // pointer-lock release/reacquire this drives.
+    cursorMode: true,
+    // NOT hideLayers: [2] — that hides ALL console furniture, including the very
+    // console this seated view is supposed to be looking at (unlike Helm/Weapons'
+    // chase cam, which is outside the ship and hides interior consoles so they don't
+    // visually poke through the exterior hull). With it on, the 3D view here was an
+    // empty room with no console in frame at all.
     promptText: 'Press E to man the Radar/Sonar Station',
-    barText: 'RADAR — Filter · Range · Designate · Sonar · E Leave',
+    barText: 'RADAR — Click a contact to designate, double-click to share · Filter · Range · Sonar · E Leave',
     accent: '#4de8ff',
   },
   [Station.SONAR]: {
@@ -72,11 +88,13 @@ const STATION_DEFS = {
     // Doctrine split from Radar: ASW-focused console, nose into its own scope rather
     // than sharing Radar's surface/air plot.
     lookOffset: new THREE.Vector3(0.2, -0.85, 6.5),
+    // Matches the sonar console's own rotation.y in BridgeInterior.js.
+    consoleYaw: 0.35,
     fov: 40,
-    lookLimits: { yaw: 0.55, pitchMin: -0.55, pitchMax: 0.2 },
-    hideLayers: [2],
+    cursorMode: true,
+    // See RADAR's identical note — this station needs its own console visible too.
     promptText: 'Press E to man Sonar/ASW',
-    barText: 'SONAR — Active Ping (Q) · Localize · Prosecute · E Leave',
+    barText: 'SONAR — Click a sub contact to designate · Active Ping (Q) · Localize · E Leave',
     accent: '#3dffa0',
   },
   [Station.LOOKOUT]: {
@@ -247,7 +265,18 @@ export class PlayerController {
       return out;
     }
     const local = this.ship.mountPoints[def.mountKey];
-    const lookTarget = local.clone().add(def.lookOffset);
+    // lookOffset is authored in the CONSOLE's own facing direction, not bare ship-local
+    // space — Radar/Sonar's consoles sit at an angle (rotated toward their operator),
+    // so adding the offset unrotated always looked toward the bow regardless of which
+    // way the console actually faced. At the old, tighter seat distance that happened
+    // to still clip part of the console into frame; once the seat was pushed back to a
+    // sane distance (see SEAT_BACK in BridgeInterior.js) it missed the console entirely
+    // and stared at the forward window wall instead. consoleYaw rotates the offset to
+    // match the console's real facing; stations without one (Lookout) are unaffected.
+    const offset = def.consoleYaw
+      ? def.lookOffset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), def.consoleYaw)
+      : def.lookOffset;
+    const lookTarget = local.clone().add(offset);
 
     this.ship.getMountWorld(local, out.pos);
     const worldLook = this.ship.getMountWorld(lookTarget, new THREE.Vector3());
@@ -299,12 +328,22 @@ export class PlayerController {
       this.state = name;
       this.rig.lookEnabled = true;
       this.onStationChange(name);
+      // Cursor stations (Radar/Sonar): release pointer lock so a real, visible OS
+      // cursor appears over the console's contact list — the scope IS the input
+      // surface here, not the camera. mousemove's `if (!this.locked) return` guard
+      // means releasing lock also naturally stops consuming movement for look, so
+      // no separate branch is needed there.
+      if (def.cursorMode && this.locked) document.exitPointerLock();
     });
   }
 
   _exitStation() {
     const def = STATION_DEFS[this.state];
     const prev = this.state;
+    // Cursor stations released pointer lock on entry (see _enterStation) — reacquire
+    // it here, still within the 'E' keydown's user-gesture context, so walking away
+    // immediately gets mouselook back instead of needing an extra click first.
+    if (def.cursorMode && !this.locked) this.dom.requestPointerLock();
     const stationLocal = this.ship.mountPoints[def.mountKey];
     this.localPos.set(stationLocal.x, 0, stationLocal.z - 1.6);
     this.localPos.x = THREE.MathUtils.clamp(this.localPos.x, this.walkBounds.minX, this.walkBounds.maxX);

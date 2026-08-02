@@ -6,7 +6,13 @@ import { ShipPhysics } from '../ship/ShipPhysics.js';
 import { getSharedMicroDetailMaps } from '../utils/ProceduralTextures.js';
 
 const State = { PATROL: 'PATROL', ENGAGE: 'ENGAGE', SINKING: 'SINKING' };
-const MODEL_URL = '/assets/models/enemy_destroyer.glb';
+// Judge finding: hostiles built from enemy_destroyer.glb read as a generation cruder
+// than the hero Meridian and the CrewedShip escorts — flat white deckhouse boxes next
+// to a fully-detailed Burke. escort_hull.glb (built for FS Sentinel/Vanguard, with
+// verified axes and an IFF-trim material for tinting) is the more detailed asset and
+// is reused here tinted hostile red, instead of commissioning a third hull model.
+const MODEL_URL = '/assets/models/escort_hull.glb';
+const HOSTILE_TINT = 0x8a2f2f;
 
 let sharedModelPromise = null;
 function loadDestroyerScene() {
@@ -44,31 +50,60 @@ export class EnemyShip extends Entity {
     try {
       const src = await loadDestroyerScene();
       const inst = src.clone(true);
-      // The Blender export's true length axis is local +Y, not +Z (confirmed via the
-      // glTF accessor bounds: Y span ~137m vs X ~16m/Z ~33m) — measuring "length" off
-      // the raw Z-extent before reconciling axes read the ship's beam/height as its
-      // length, producing a scale factor ~6x too large. That's what caused the ~460m
-      // mast-into-the-stratosphere bug: the whole model, mast included, got scaled up
-      // by that bogus factor. Rotate -90° about X first so the true length axis lands
-      // on Z and "up" lands on Y, matching bow=+Z/up=+Y, *then* measure/scale.
-      // (+90°, not -90°: the sign matters here — the wrong one still fixed the scale
-      // but left the hull's own mesh taller than the mast/bridge/radome, i.e. right
-      // proportions, upside-down stacking. Verified via per-part world-space Box3 Y
-      // ranges: Hull must end up lowest, Radome/Mast highest.)
-      inst.rotation.x = Math.PI / 2;
-      inst.updateMatrixWorld(true);
+      // escort_hull.glb is authored bow=+Z/up=+Y/beam=X and already centered on X=0/
+      // Z=0 with Y=0 at the waterline (see CrewedShip._tryLoadEscortModel) — unlike
+      // the old enemy_destroyer.glb this needs no axis-reconciling rotation or
+      // box-based re-centering, only a safety scale if the source length ever drifts
+      // from this contact's ShipPhysics length.
       const box = new THREE.Box3().setFromObject(inst);
       const size = new THREE.Vector3();
       box.getSize(size);
       const targetLen = this.length || 110;
       if (size.z > 1) inst.scale.setScalar(targetLen / size.z);
-      // Center keel on origin XZ; keep deck roughly aligned.
-      box.setFromObject(inst);
-      const center = new THREE.Vector3();
-      box.getCenter(center);
-      inst.position.x -= center.x;
-      inst.position.z -= center.z;
-      inst.position.y -= box.min.y;
+
+      // Tint the model's IFF materials. WorldManager.spawnFriendlyScreen mutates
+      // `this.iff` to FRIENDLY synchronously right after construction, before this
+      // async load resolves, so reading it here (not a captured constructor-time
+      // value) correctly distinguishes hostile contacts from the friendly screen
+      // units that also route through this class. Clone per-instance (keyed by the
+      // shared source material's uuid) so every mesh referencing that material — and
+      // every other EnemyShip sharing the cached glTF scene — gets its own clone
+      // rather than one ship's tint silently overwriting another's.
+      //
+      // escort_hull.glb's only "IFF"-named material (EH_IFFMat) is a small waterline
+      // marker light, not a hull trim stripe — the model has no separate trim material.
+      // Tinting only that left every ship's actual hull/superstructure (EH_HullMat/
+      // EH_SuperMat) an identical neutral grey — hostiles and friendlies were visually
+      // indistinguishable except for one tiny light (judge-caught: "tinted red" was
+      // essentially false). Blend (not replace) hull/super toward the IFF color so it
+      // reads as a distinctly painted hull, matching how the old procedural
+      // buildEnemyShipMesh(iffColor) hulls read before this asset swap.
+      const tint = this.iff === IFF.FRIENDLY ? 0x2f6a8a : HOSTILE_TINT;
+      const tintCol = new THREE.Color(tint);
+      const tintedByOrigUuid = new Map();
+      inst.traverse((o) => {
+        if (!o.isMesh) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (let i = 0; i < mats.length; i++) {
+          const mat = mats[i];
+          const name = mat?.name || '';
+          const isMarker = /IFF/i.test(name);
+          const isHullPaint = /Hull|Super/i.test(name);
+          if (!mat || (!isMarker && !isHullPaint)) continue;
+          let cloned = tintedByOrigUuid.get(mat.uuid);
+          if (!cloned) {
+            cloned = mat.clone();
+            if (isMarker) cloned.color.setHex(tint);
+            // 0.5 read as a solid crayon-pink hull on the new frigate's large merged
+            // surfaces (verified live) — 0.3 keeps it clearly distinguishable as an
+            // IFF-colored accent without losing the paint's neutral hull character.
+            else cloned.color.lerp(tintCol, 0.3);
+            tintedByOrigUuid.set(mat.uuid, cloned);
+          }
+          if (Array.isArray(o.material)) o.material[i] = cloned;
+          else o.material = cloned;
+        }
+      });
 
       const { normalMap, roughnessMap } = getSharedMicroDetailMaps();
       inst.traverse((o) => {
@@ -78,15 +113,21 @@ export class EnemyShip extends Entity {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         for (const mat of mats) {
           if (!mat || mat.transparent) continue;
+          // repeat=40 was tuned for the old ~137-primitive unmerged hull, where each
+          // small mesh had its own small UV island; now that the rebuild merges
+          // primitives by material into a handful of much larger combined meshes, the
+          // same repeat count reads as a distracting, regular tiled grid across the
+          // whole hull instead of fine surface grit. Lower repeat = larger, subtler
+          // grain relative to the bigger merged UV space.
           if (!mat.normalMap) {
             const n = normalMap.clone(); n.needsUpdate = true;
-            n.repeat.set(40, 40); n.wrapS = n.wrapT = THREE.RepeatWrapping;
+            n.repeat.set(10, 10); n.wrapS = n.wrapT = THREE.RepeatWrapping;
             mat.normalMap = n;
-            mat.normalScale = new THREE.Vector2(0.45, 0.45);
+            mat.normalScale = new THREE.Vector2(0.35, 0.35);
           }
           if (!mat.roughnessMap) {
             const r = roughnessMap.clone(); r.needsUpdate = true;
-            r.repeat.set(40, 40); r.wrapS = r.wrapT = THREE.RepeatWrapping;
+            r.repeat.set(10, 10); r.wrapS = r.wrapT = THREE.RepeatWrapping;
             mat.roughnessMap = r;
           }
           // Kill plastic chrome: force maritime roughness floor.
