@@ -31,15 +31,15 @@ export class SkySystem {
     this.sunLight = new THREE.DirectionalLight(0xfff2e0, 5.1);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(2048, 2048);
-    this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 1200;
-    this.sunLight.shadow.camera.left = -360;
-    this.sunLight.shadow.camera.right = 360;
-    this.sunLight.shadow.camera.top = 360;
-    this.sunLight.shadow.camera.bottom = -360;
-    this.sunLight.shadow.bias = -0.0005;
-    this.sunLight.shadow.normalBias = 0.025;
-    this.sunLight.shadow.radius = 2.5;
+    this.sunLight.shadow.camera.near = 40;
+    this.sunLight.shadow.camera.far = 900;
+    // Tight ortho frustum around the hero — a ±360m box wasted texels and left deck
+    // contact shadows too soft for chase/helm AAA reads. Updated each frame in update().
+    this._shadowHalfExtent = 165;
+    this._applyShadowFrustum();
+    this.sunLight.shadow.bias = -0.00035;
+    this.sunLight.shadow.normalBias = 0.018;
+    this.sunLight.shadow.radius = 2.0;
     scene.add(this.sunLight);
     scene.add(this.sunLight.target);
 
@@ -97,6 +97,16 @@ export class SkySystem {
     return this.envRT.texture;
   }
 
+  _applyShadowFrustum() {
+    const h = this._shadowHalfExtent;
+    const cam = this.sunLight.shadow.camera;
+    cam.left = -h;
+    cam.right = h;
+    cam.top = h;
+    cam.bottom = -h;
+    cam.updateProjectionMatrix();
+  }
+
   /** Keep shadow frustum under the player ship so chase shots get hull contact shadows. */
   setFollowTarget(pos) {
     if (!pos) return;
@@ -110,6 +120,11 @@ export class SkySystem {
     const anchor = this._followTarget.lengthSq() > 0.01 ? this._followTarget : camera.position;
     this.sunLight.target.position.set(anchor.x, 0, anchor.z);
     this.sunLight.target.updateMatrixWorld();
+    const half = this.sunLight.userData.shadowHalfExtent ?? this._shadowHalfExtent;
+    if (half !== this._shadowHalfExtent) {
+      this._shadowHalfExtent = half;
+      this._applyShadowFrustum();
+    }
     const dist = 400;
     this.sunLight.position.copy(this.sunPosition).multiplyScalar(dist).add(anchor);
 

@@ -12,9 +12,11 @@ import * as THREE from 'three';
 // longer quiet opening window in start(), and lower spawn odds in
 // _maintainPopulation below) give the player room to handle one thing before the
 // next shows up.
-const ORDER_COOLDOWN = [90, 150];
-const CHATTER_COOLDOWN = [35, 55];
-const POP_CHECK_COOLDOWN = [70, 100];
+// Tuned for a living battlespace: frequent enough that escorts, orders, and
+ // station chatter keep the player reacting — without stacking three waves at once.
+const ORDER_COOLDOWN = [55, 95];
+const CHATTER_COOLDOWN = [18, 32];
+const POP_CHECK_COOLDOWN = [45, 70];
 
 function randRange([a, b]) {
   return a + Math.random() * (b - a);
@@ -55,9 +57,9 @@ export class DynamicOps {
     // Longer quiet opening window — the player just got underway and is still
     // learning the stations/controls; the first DynamicOps-driven contact/order
     // shouldn't land on top of the scripted mission's own first encounter.
-    this._orderAt = 75 + Math.random() * 25;
-    this._chatterAt = 25 + Math.random() * 15;
-    this._popAt = 60 + Math.random() * 20;
+    this._orderAt = 40 + Math.random() * 20;
+    this._chatterAt = 12 + Math.random() * 10;
+    this._popAt = 35 + Math.random() * 15;
     const origin = this.ships.player.group.position;
     this.world.spawnMerchantTraffic(origin);
     this.world.spawnHorizonTaskForce(origin);
@@ -104,7 +106,7 @@ export class DynamicOps {
     // Soft floor — at most one domain top-up per population tick. Odds lowered so a
     // check firing doesn't usually mean something new shows up — most ticks should
     // do nothing, keeping the pacing gradual rather than a steady drip of contacts.
-    if (hostiles.length < 1 && this.mission.beatIndex >= 1 && Math.random() < 0.28) {
+    if (hostiles.length < 2 && this.mission.beatIndex >= 1 && Math.random() < 0.42) {
       this.world.spawnWave('wave1', playerPos);
       this.onComms({
         speaker: 'CIC',
@@ -112,11 +114,11 @@ export class DynamicOps {
         urgency: 'warning',
       });
       this.coop?.require('share');
-    } else if (subs.length < 1 && this.mission.beatIndex >= 2 && Math.random() < 0.18) {
+    } else if (subs.length < 1 && this.mission.beatIndex >= 1 && Math.random() < 0.28) {
       this.world.spawnWave('sub_roamer', playerPos);
-    } else if (air.length < 1 && this.mission.beatIndex >= 3 && Math.random() < 0.15) {
+    } else if (air.length < 1 && this.mission.beatIndex >= 2 && Math.random() < 0.28) {
       this.world.spawnWave('air_probe', playerPos);
-    } else if (merchants.length < 1 && Math.random() < 0.25) {
+    } else if (merchants.length < 2 && Math.random() < 0.35) {
       this.world.spawnMerchantTraffic(playerPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2000, 0, (Math.random() - 0.5) * 2000)));
     }
   }
@@ -127,13 +129,31 @@ export class DynamicOps {
     let order;
     let coopReq = null;
 
-    if (roll < 0.22) {
+    if (roll < 0.18) {
+      const p = playerPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1600, 0, 700 + Math.random() * 1200));
+      this.world.spawnWave('combined_strike', p);
+      order = {
+        id: `ord-combo-${this._waveSerial}`,
+        type: 'coop_prosecute',
+        text: 'Combined arms raid — share the primary track (C), weapons free (V), split AAW / surface with escorts',
+        targetPos: p,
+        expires: 140,
+        stationHint: 'TAO',
+        needsCoop: 'engage',
+      };
+      coopReq = 'share';
+      this.onComms({
+        speaker: 'HORIZON ACTUAL',
+        text: `FLASH — surface group AND air raid on axis ${padBrg(bearingTo(playerPos, p))}. MERIDIAN owns the picture; escorts will screen and shoot.`,
+        urgency: 'critical',
+      });
+    } else if (roll < 0.36) {
       const p = playerPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1800, 0, 800 + Math.random() * 1400));
       this.world.spawnWave('fleet_probe', p);
       order = {
         id: `ord-surf-${this._waveSerial}`,
         type: 'coop_prosecute',
-        text: 'Share the surface track (C), then weapons free (V) — escorts will help prosecute',
+        text: 'Share the surface track (C), then weapons free (V) — escorts will help prosecute with ASMs',
         targetPos: p,
         expires: 120,
         stationHint: 'RADAR',
@@ -142,34 +162,34 @@ export class DynamicOps {
       coopReq = 'share';
       this.onComms({
         speaker: 'HORIZON ACTUAL',
-        text: `Surface group bearing ${padBrg(bearingTo(playerPos, p))}. MERIDIAN: share track, then release the screen. Do not fight alone.`,
+        text: `Hostile SAG bearing ${padBrg(bearingTo(playerPos, p))}. Share track, then release the screen — missile doctrine, not a gun duel.`,
         urgency: 'warning',
       });
-    } else if (roll < 0.42) {
+    } else if (roll < 0.52) {
       const p = playerPos.clone().add(new THREE.Vector3(-400 - Math.random() * 600, 0, 200 + Math.random() * 900));
-      this.world.spawnWave('sub_roamer', p);
+      this.world.spawnWave('asw_alert', p);
       order = {
         id: `ord-sub-${this._waveSerial}`,
         type: 'coop_ping',
         text: 'Request escort active sonar (N), then localize and prosecute the sub',
         targetPos: p,
         expires: 130,
-        stationHint: 'RADAR',
+        stationHint: 'SONAR',
         needsCoop: 'ping',
       };
       coopReq = 'ping';
       this.onComms({
         speaker: 'SONAR NET',
-        text: `Subsurface transient bearing ${padBrg(bearingTo(playerPos, p))}. MERIDIAN — have SENTINEL go active (Request Ping).`,
+        text: `Subsurface transient bearing ${padBrg(bearingTo(playerPos, p))}. MERIDIAN — have SENTINEL go active (Request Ping). ASROC preferred.`,
         urgency: 'warning',
       });
-    } else if (roll < 0.58) {
+    } else if (roll < 0.66) {
       const p = playerPos.clone().add(new THREE.Vector3(-1200 - Math.random() * 800, 0, -900 - Math.random() * 700));
       this.world.spawnWave('air_probe', p);
       order = {
         id: `ord-air-${this._waveSerial}`,
         type: 'coop_prosecute',
-        text: 'Designate bandits, share track (C), weapons free (V) — split the air picture with escorts',
+        text: 'Designate bandits, share track (C), weapons free (V) — SAMs first, escorts picket',
         targetPos: p,
         expires: 100,
         stationHint: 'WEAPONS',
@@ -178,10 +198,10 @@ export class DynamicOps {
       coopReq = 'engage';
       this.onComms({
         speaker: 'AAWC',
-        text: `Air warning yellow — bogeys bearing ${padBrg(bearingTo(playerPos, p))}. Share designation and release the force.`,
+        text: `Air warning yellow — bogeys bearing ${padBrg(bearingTo(playerPos, p))}. Select SAM, share designation, release the force.`,
         urgency: 'critical',
       });
-    } else if (roll < 0.72) {
+    } else if (roll < 0.78) {
       const merchants = this.world.entities.filter((e) => e.iff === 'NEUTRAL' && !e.destroyed);
       let m = merchants[0];
       if (!m) {
@@ -203,7 +223,7 @@ export class DynamicOps {
         text: `Unclassified ${m?.name || 'merchant'} — Lookout classify, CIC share to the force. Do not engage neutrals.`,
         urgency: 'normal',
       });
-    } else if (roll < 0.86) {
+    } else if (roll < 0.90) {
       order = {
         id: `ord-screen-${this._waveSerial}`,
         type: 'resume_screen',
@@ -240,8 +260,6 @@ export class DynamicOps {
     this._activeOrder = order;
     this._orderTimer = order.expires;
     this.onObjectiveHint(order);
-    // Hint the cooperative step that actually clears the order (needsCoop),
-    // falling back to the lead-in action when that's all we have.
     const req = order.needsCoop || coopReq;
     if (req) this.coop?.require(req);
   }

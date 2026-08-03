@@ -14,13 +14,22 @@ export class WorldManager {
 
   spawnWave(name, aroundPos) {
     if (name === 'wave1') {
-      const p = aroundPos.clone().add(new THREE.Vector3(400, 0, 200));
-      this.entities.push(new EnemyShip({
-        name: 'Master 1 (FFG)',
-        position: p,
-        patrolPoints: [p.clone(), p.clone().add(new THREE.Vector3(600, 0, -300))],
+      // Surface action group: lead DDG + wing FFG, shared patrol axis.
+      const base = aroundPos.clone().add(new THREE.Vector3(420, 0, 240));
+      const lead = new EnemyShip({
+        name: 'Master 1 (DDG)',
+        position: base,
+        patrolPoints: [base.clone(), base.clone().add(new THREE.Vector3(700, 0, -280))],
         scene: this.scene,
-      }));
+        shipClass: 'destroyer',
+      });
+      const wing = new EnemyShip({
+        name: 'Master 2 (FFG)',
+        position: base.clone().add(new THREE.Vector3(180, 0, -120)),
+        patrolPoints: [base.clone().add(new THREE.Vector3(180, 0, -120)), base.clone().add(new THREE.Vector3(780, 0, -360))],
+        scene: this.scene,
+      });
+      this.entities.push(lead, wing);
     } else if (name === 'sub1' || name === 'sub_roamer') {
       const off = name === 'sub_roamer'
         ? new THREE.Vector3((Math.random() - 0.5) * 900, 0, 350 + Math.random() * 700)
@@ -32,7 +41,7 @@ export class WorldManager {
         scene: this.scene,
       }));
     } else if (name === 'airWave' || name === 'air_probe') {
-      const n = name === 'air_probe' ? 2 : 2;
+      const n = name === 'air_probe' ? 2 : 3;
       for (let i = 0; i < n; i++) {
         const p = aroundPos.clone().add(new THREE.Vector3(-1500 + i * 220 + Math.random() * 100, 0, -1600 - i * 160));
         this.entities.push(new Aircraft({ name: `Bandit ${String.fromCharCode(65 + i)}`, position: p, scene: this.scene }));
@@ -45,8 +54,17 @@ export class WorldManager {
           position: p,
           patrolPoints: [p.clone(), p.clone().add(new THREE.Vector3(500, 0, -280 + i * 40))],
           scene: this.scene,
+          shipClass: 'destroyer',
         }));
       }
+    } else if (name === 'combined_strike') {
+      // Coordinated package: surface pair + air raid on staggered axes.
+      this.spawnWave('fleet_probe', aroundPos);
+      this.spawnWave('air_probe', aroundPos.clone().add(new THREE.Vector3(-400, 0, -200)));
+    } else if (name === 'asw_alert') {
+      this.spawnWave('sub_roamer', aroundPos);
+      // Decoy surface contact so ASW isn't the only plot noise.
+      if (Math.random() < 0.45) this.spawnWave('patrol_pair', aroundPos.clone().add(new THREE.Vector3(600, 0, 200)));
     }
   }
 

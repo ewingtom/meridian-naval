@@ -65,7 +65,10 @@ export const SkyShader = {
       vec3 dir = normalize(vWorldPosition - cameraPosition);
       float elevation = dir.y;
 
-      float skyMix = pow(clamp(elevation, 0.0, 1.0), 0.45);
+      // Jitter elevation before the pow — breaks mach bands on the large horizon ramp
+      float skyMixRaw = clamp(elevation, 0.0, 1.0);
+      skyMixRaw += (hash(gl_FragCoord.xy * 0.37 + uTime * 0.03) - 0.5) * 0.007;
+      float skyMix = pow(clamp(skyMixRaw, 0.0, 1.0), 0.45);
       vec3 sky = mix(uHorizonColor, uZenithColor, skyMix);
 
       // subtle extra warmth low near the horizon
@@ -126,10 +129,13 @@ export const SkyShader = {
 
       vec3 color = sky + sunContribution * (1.0 - cloud * cloudFade * 0.85);
       // Break sky gradient banding (common WebGL 8-bit artifact on large smooth ramps)
-      float dither = (hash(gl_FragCoord.xy + uTime * 17.0) - 0.5) * (2.4 / 255.0);
+      float dither = (hash(gl_FragCoord.xy + uTime * 17.0) - 0.5) * (3.0 / 255.0);
+      float horizonBand = (1.0 - smoothstep(0.0, 0.38, elevation));
+      dither += (hash(vec2(gl_FragCoord.x * 0.5, gl_FragCoord.y * 0.5 + uTime * 3.0)) - 0.5)
+        * horizonBand * (2.8 / 255.0);
       color += dither;
       // Soften near-horizon mach bands further with a tiny luma noise
-      color += (hash(gl_FragCoord.yx * 1.7) - 0.5) * (1.1 / 255.0);
+      color += (hash(gl_FragCoord.yx * 1.7) - 0.5) * (1.6 / 255.0);
       gl_FragColor = vec4(color, 1.0);
     }
   `,

@@ -305,7 +305,8 @@ def chamfered_box_plan(z_aft, z_fwd, hw_aft, hw_fwd, ch_fwd=2.0, ch_aft=1.6, hw_
 
 def sheer(z):
     """Main-deck height above the waterline. Burkes have strong forward sheer."""
-    return DECK_Y + 4.2 * max(0.0, (z - 16.0) / 61.5) ** 1.75
+    fwd = max(0.0, (z - 12.0) / 63.0)
+    return DECK_Y + 4.35 * (fwd ** 1.55) * (1.0 - 0.12 * (1.0 - fwd) ** 2)
 
 
 # --------------------------------------------------------------------------
@@ -362,17 +363,19 @@ def station_ring(z, hb_wl, hb_deck, ybot, ydeck):
     """Half-section from keel up the side to the deck edge and in to the
     centreline, then mirrored. Gives a hard knuckle at ~60% of the freeboard."""
     pts = [(0.0, ybot)]
-    NB = 6
+    NB = 10
     for i in range(1, NB + 1):
         th = (i / NB) * (math.pi * 0.5)
         s = math.sin(th)
-        pts.append((hb_wl * (s ** 0.72), ybot * (1.0 - s ** 1.7)))
+        pts.append((hb_wl * (s ** 0.68), ybot * (1.0 - s ** 1.55)))
     fb = ydeck  # freeboard from waterline to deck edge
     # Hard knuckle: near-vertical out of the water, one sharp flare panel, then a
     # slight tumblehome to the deck edge. Two >30 deg breaks so auto-smooth leaves
     # a crisp knuckle line running aft instead of a bloated rounded blister.
-    pts.append((hb_wl * 1.006, fb * 0.22))
-    pts.append((hb_deck, fb * 0.52))               # KNUCKLE — max beam
+    pts.append((hb_wl * 1.004, fb * 0.18))
+    pts.append((hb_deck * 1.008, fb * 0.38))
+    pts.append((hb_deck, fb * 0.58))               # KNUCKLE — max beam (rounded)
+    pts.append((hb_deck * 0.988, fb * 0.92))
     pts.append((hb_deck * 0.984, fb))              # deck edge
     pts.append((hb_deck * 0.55, fb + 0.17))        # deck camber
     pts.append((0.0, fb + 0.27))
@@ -466,6 +469,26 @@ dome.scale = (0.78, 0.62, 2.5)
 bpy.ops.object.transform_apply(scale=True)
 dome.data.materials.append(mat_keel)
 shade_smooth(dome, 45)
+
+for side in (-1, 1):
+    tag = "S" if side > 0 else "P"
+    for i, zc in enumerate([58.0, 63.5, 68.5, 72.5]):
+        hw = deck_hw(zc) * 0.92
+        yd = sheer(zc)
+        flare = 0.55 + i * 0.18
+        add_box(f"BowFlare_{tag}_{i}", (side * (hw + flare * 0.35), yd - 1.2 + i * 0.22, zc),
+                (flare, 2.4 - i * 0.25, 4.8 - i * 0.35), mat_hull, 0.12,
+                rot=(math.radians(-4 - i * 2), math.radians(side * (8 + i * 3)), 0), uv=5.0)
+bpy.ops.mesh.primitive_cone_add(radius1=1.05, radius2=0.18, depth=3.6,
+                                location=(0, sheer(76.2) + 0.85, 76.0), vertices=14)
+stem = bpy.context.active_object
+stem.name = "StemCap"
+stem.rotation_euler = (math.radians(90), 0, 0)
+bpy.ops.object.transform_apply(rotation=True)
+stem.data.materials.append(mat_hull)
+bevel(stem, 0.08, 2)
+shade_smooth(stem, 35)
+
 
 
 # --------------------------------------------------------------------------
@@ -571,12 +594,17 @@ def spy_face(tag, x, z, y, yaw_deg, tilt_deg=12.0):
     nz = math.cos(ry) * math.cos(rx)
 
     # canted housing block behind the array
-    add_box(f"SPY_Housing_{tag}", (x - nx * 0.55, y, z - nz * 0.55), (5.5, 5.5, 1.1),
-            mat_super, 0.10, rot=(rx, ry, 0), uv=5.0)
+    add_box(f"SPY_Housing_{tag}", (x - nx * 0.72, y, z - nz * 0.72), (6.2, 6.2, 1.7),
+            mat_super, 0.12, rot=(rx, ry, 0), uv=5.0)
+    add_box(f"SPY_Recess_{tag}", (x - nx * 0.48, y, z - nz * 0.48), (5.1, 5.1, 0.85),
+            mat_metal, 0.08, rot=(rx, ry, 0), uv=4.0)
+    add_box(f"SPY_Shadow_{tag}", (x - nx * 0.26, y, z - nz * 0.26), (4.5, 4.5, 0.2),
+            mat_metal, 0.05, rot=(rx, ry, 0), uv=3.0)
 
     for suffix, radius, depth, mat, push in (
-        ("Frame", 2.42, 0.34, mat_metal, 0.06),
-        ("Face", 2.14, 0.30, mat_spy, 0.20),
+        ("Frame", 2.55, 0.55, mat_metal, 0.10),
+        ("FrameInner", 2.35, 0.16, mat_metal, 0.05),
+        ("Face", 2.16, 0.30, mat_spy, 0.26),
     ):
         bpy.ops.mesh.primitive_cylinder_add(radius=radius, depth=depth, vertices=8,
                                             location=(0, 0, 0))
@@ -615,6 +643,12 @@ mast_plan = [(3.2, 12.4), (3.9, 8.6), (3.9, 1.2), (3.0, -1.4),
              (-3.0, -1.4), (-3.9, 1.2), (-3.9, 8.6), (-3.2, 12.4)]
 poly_prism("MastTower", mast_plan, L04 + 1.4, 31.4, mat_super, inset_top=1.10, uv=6.0)
 add_box("MastPlatform", (0, 31.55, 5.4), (9.4, 0.34, 7.6), mat_super, 0.05, uv=5.0)
+add_box("MastPlatformMid", (0, 34.25, 5.4), (7.8, 0.30, 6.2), mat_super, 0.05, uv=4.0)
+add_box("MastPlatformUpper", (0, 37.85, 5.4), (5.6, 0.26, 4.8), mat_super, 0.04, uv=4.0)
+for side in (-1, 1):
+    tag = "S" if side > 0 else "P"
+    add_box(f"MastPlatMidRail_{tag}", (side * 3.8, 34.85, 5.4), (0.10, 0.10, 5.8), mat_metal, 0, uv=0)
+    add_box(f"MastPlatUpRail_{tag}", (side * 2.7, 38.35, 5.4), (0.09, 0.09, 4.2), mat_metal, 0, uv=0)
 for side in (-1, 1):
     tag = "S" if side > 0 else "P"
     for k in range(6):
@@ -772,6 +806,17 @@ for side in (-1, 1):
                 (0.09, 0.85, 0.09), mat_metal, 0, uv=0, smooth=False)
 add_box("HangarFace", (0, 11.6, HANGAR_AFT - 0.35), (14.4, 1.5, 0.5), mat_super, 0.06, uv=4.0)
 
+# Hangar lip / flight-deck greebles
+for side in (-1, 1):
+    tag = "S" if side > 0 else "P"
+    add_box(f"HangarSill_{tag}", (side * 5.8, DECK_Y + 0.55, -48.0),
+            (2.2, 0.28, 0.55), mat_metal, 0.04, uv=0)
+add_box("FlightDeckCamber", (0, DECK_Y + 0.22, -62.0), (15.6, 0.18, 22.0), mat_deck, 0.06, uv=6.0)
+for k in range(8):
+    z = -70.0 + k * 2.4
+    add_box(f"PadTieDown_{k}", (math.sin(k * 1.7) * 3.2, DECK_Y + 0.31, z),
+            (0.26, 0.05, 0.26), mat_metal, 0, uv=0, smooth=False)
+
 # Flight deck markings (the hull's own deck faces are already nonskid)
 PAD_Z = -68.0
 for k in range(28):
@@ -842,6 +887,12 @@ for side in (-1, 1):
     tag = "S" if side > 0 else "P"
     lifeline(f"Fore_{tag}", 33.0, 73.5, side, n=14)
     lifeline(f"Aft_{tag}", -58.0, -76.0, side, n=8)
+    for k in range(13):
+        z = 33.0 + k * 3.1
+        if z > 73.0:
+            break
+        add_box(f"ForeLowStanch_{tag}_{k}", (side * (deck_hw(z) - 0.48), sheer(z) + 0.38, z),
+                (0.07, 0.72, 0.07), mat_metal, 0, uv=0, smooth=False)
 
 # ---- superstructure surface detail: doors, vents, level break strips ----------
 for side in (-1, 1):
@@ -865,6 +916,33 @@ for side in (-1, 1):
         add_box(f"SSRailTop_{tag}_{i}", (side * hw, y + 1.16, (z0 + z1) * 0.5),
                 (0.09, 0.09, z1 - z0), mat_metal, 0, uv=0, smooth=False)
 
+
+# Surface greebles + deck furniture
+for side in (-1, 1):
+    tag = "S" if side > 0 else "P"
+    add_box(f"CableTray_{tag}", (side * 8.55, L02 + 0.4, -8.0), (0.42, 0.55, 38.0), mat_metal, 0.05, uv=0)
+    for i, z in enumerate([18.0, 4.0, -10.0, -22.0]):
+        add_box(f"PipeRun_{tag}_{i}", (side * 8.72, L01 + 2.2 + (i % 2) * 0.6, z),
+                (0.18, 0.18, 5.5), mat_metal, 0.03, uv=0)
+bpy.ops.mesh.primitive_uv_sphere_add(radius=0.95, location=(4.2, 33.2, 11.5), segments=14, ring_count=8)
+sat1 = bpy.context.active_object
+sat1.name = "SATCOM_DomeA"
+sat1.data.materials.append(mat_radome)
+shade_smooth(sat1, 45)
+bpy.ops.mesh.primitive_uv_sphere_add(radius=0.72, location=(-3.8, 32.4, -14.0), segments=12, ring_count=7)
+sat2 = bpy.context.active_object
+sat2.name = "SATCOM_DomeB"
+sat2.data.materials.append(mat_radome)
+shade_smooth(sat2, 45)
+add_cyl("FlagStaff", (0, 41.8, -74.5), 0.06, 8.0, mat_metal, rot=(math.radians(82), 0, 0), verts=8, bevel_w=0)
+for i, z in enumerate([66.0, 54.0, -54.0, -68.0]):
+    for side in (-1, 1):
+        tag = "S" if side > 0 else "P"
+        x = side * (deck_hw(z) - 1.85)
+        add_cyl(f"Bitt_{tag}_{i}a", (x - 0.32, sheer(z) + 0.5, z), 0.2, 0.85,
+                mat_metal, rot=(math.radians(90), 0, 0), verts=8, bevel_w=0)
+        add_cyl(f"Bitt_{tag}_{i}b", (x + 0.32, sheer(z) + 0.5, z), 0.2, 0.85,
+                mat_metal, rot=(math.radians(90), 0, 0), verts=8, bevel_w=0)
 
 # --------------------------------------------------------------------------
 # Mount points (names are contract with CrewedShip._extractMountPoints)

@@ -43,6 +43,8 @@ export class CommsLog {
     this.stack = null;
     this._mounted = false;
     this._timers = new Map(); // id -> timeoutId
+    this._recentKeys = new Map(); // speaker|text -> timestamp
+    this._dedupeMs = options.dedupeMs ?? 12000;
   }
 
   mount(container = document.getElementById('ui-root')) {
@@ -60,6 +62,25 @@ export class CommsLog {
 
   push(entry = {}) {
     if (!this._mounted) return null;
+    const speaker = entry.speaker || 'COMMS';
+    const text = entry.text || '';
+    const key = `${speaker}|${text}`;
+    const now = performance.now();
+    if (this._recentKeys.get(key) > now - this._dedupeMs) return null;
+    if (this.stack) {
+      for (const card of this.stack.querySelectorAll('.comms-card')) {
+        const cardSpeaker = card.querySelector('.comms-speaker')?.textContent || '';
+        const cardText = card.querySelector('.comms-text')?.textContent || '';
+        if (cardSpeaker === speaker && cardText === text) return null;
+      }
+    }
+    this._recentKeys.set(key, now);
+    if (this._recentKeys.size > 48) {
+      for (const [k, t] of this._recentKeys) {
+        if (t <= now - this._dedupeMs) this._recentKeys.delete(k);
+      }
+    }
+
     const id = `comms-${++_uid}`;
     const urgency = entry.urgency || 'normal';
     const duration = entry.durationMs ?? DEFAULT_DURATIONS[urgency] ?? DEFAULT_DURATIONS.normal;
@@ -69,10 +90,10 @@ export class CommsLog {
       <div class="comms-card-accent"></div>
       <div class="comms-card-body">
         <div class="comms-meta">
-          <span class="comms-speaker">${this._escape(entry.speaker || 'COMMS')}</span>
+          <span class="comms-speaker">${this._escape(speaker)}</span>
           ${urgency !== 'normal' ? `<span class="comms-urgency-tag">${urgency}</span>` : ''}
         </div>
-        <div class="comms-text">${this._escape(entry.text || '')}</div>
+        <div class="comms-text">${this._escape(text)}</div>
       </div>
       <button class="comms-dismiss" aria-label="Dismiss">&times;</button>
     `;
@@ -115,6 +136,7 @@ export class CommsLog {
     if (!this.stack) return;
     for (const t of this._timers.values()) clearTimeout(t);
     this._timers.clear();
+    this._recentKeys.clear();
     this.stack.innerHTML = '';
   }
 

@@ -99,7 +99,7 @@ export class ShipPhysics {
   /** Full world transform (position with heave applied, quaternion incl. pitch/roll). */
   applyToObject3D(obj) {
     // Light draft for waterline contact without exposing underwater skirt
-    obj.position.set(this.position.x, this.heave - 0.28, this.position.z);
+    obj.position.set(this.position.x, this.heave - 0.34, this.position.z);
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.heading);
     const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.pitch);
     const qRoll = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), this.roll);

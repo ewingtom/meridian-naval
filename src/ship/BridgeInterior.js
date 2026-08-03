@@ -65,6 +65,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
     ? new THREE.MeshStandardMaterial({
       color: 0xd4eef8, transparent: true, opacity: 0.14, roughness: 0.08, metalness: 0.05,
       side: THREE.DoubleSide, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     })
     : new THREE.MeshPhysicalMaterial({
       color: 0xcfeaf5,
@@ -77,6 +78,9 @@ export function buildBridgeInterior({ lite = false } = {}) {
       opacity: 1,
       side: THREE.DoubleSide,
       depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
       envMapIntensity: 1.1,
     });
   const mullionMat = new THREE.MeshStandardMaterial({ color: 0x1c1f22, roughness: 0.5, metalness: 0.4 });
@@ -141,7 +145,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
     group.add(header);
     if (withWindows) {
       const glass = wallSegment(w * 0.94, winHi - winLo, glassMat);
-      glass.position.set(cx, (winLo + winHi) / 2, z);
+      glass.position.set(cx, (winLo + winHi) / 2, z + facingSign * 0.018);
       glass.renderOrder = 10;
       group.add(glass);
       const mullionCount = Math.max(2, Math.round(w / 2.2));
@@ -168,7 +172,7 @@ export function buildBridgeInterior({ lite = false } = {}) {
     group.add(header);
     if (withWindows) {
       const glass = geoRot(wallSegment(d * 0.94, winHi - winLo, glassMat));
-      glass.position.set(x, (winLo + winHi) / 2, cz);
+      glass.position.set(x + 0.018, (winLo + winHi) / 2, cz);
       glass.renderOrder = 10;
       group.add(glass);
       const mullionCount = Math.max(2, Math.round(d / 2.2));

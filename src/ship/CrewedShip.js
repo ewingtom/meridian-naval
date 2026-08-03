@@ -12,7 +12,7 @@ import { DamageState, getMunitionSpec } from '../systems/DamageModel.js';
 // BASE_URL is '/' locally and '/meridian-naval/' on GitHub Pages — absolute
 // '/assets/...' paths 404 on Pages and leave the greybox placeholder forever.
 const ASSET_BASE = import.meta.env.BASE_URL || '/';
-const MODEL_URL = `${ASSET_BASE}assets/models/player_ship.glb?v=burke24`;
+const MODEL_URL = `${ASSET_BASE}assets/models/player_ship.glb?v=burke29`;
 const ESCORT_MODEL_URL = `${ASSET_BASE}assets/models/escort_hull.glb?v=ffg2`;
 
 let sharedEscortScenePromise = null;
@@ -159,8 +159,6 @@ export class CrewedShip {
       const iffCol = new THREE.Color(iffColor);
       inst.traverse((o) => {
         if (!o.isMesh) return;
-        o.castShadow = true;
-        o.receiveShadow = true;
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         for (let i = 0; i < mats.length; i++) {
           const mat = mats[i];
@@ -189,6 +187,7 @@ export class CrewedShip {
       this.group.add(this.modelGroup);
       if (found) this.mountPoints = { ...this.mountPoints, ...found };
       this.usingPlaceholder = false;
+      this._applyMeshShadows(inst);
       // eslint-disable-next-line no-console
       console.log('[CrewedShip] Loaded high-detail escort model from', ESCORT_MODEL_URL);
     } catch (err) {
@@ -210,6 +209,7 @@ export class CrewedShip {
     this.modelGroup = shipGroup;
     this.mountPoints = mountPoints;
     this.group.add(this.modelGroup);
+    this._applyMeshShadows(this.modelGroup);
     this._addBridgeInterior();
   }
 
@@ -238,6 +238,7 @@ export class CrewedShip {
 
     this.bridgeInterior = interiorGroup;
     this.group.add(interiorGroup);
+    this._applyMeshShadows(interiorGroup, { interior: true });
 
     const xform = (v) => v.clone().multiplyScalar(scale).add(offset);
     const scaledPts = {
@@ -266,6 +267,7 @@ export class CrewedShip {
       const loaded = gltf.scene;
       loaded.traverse((o) => {
         if (o.isMesh) {
+          // Initial pass — refined again after material polish below.
           o.castShadow = true;
           o.receiveShadow = true;
         }
@@ -303,6 +305,7 @@ export class CrewedShip {
         // eslint-disable-next-line no-console
         console.warn('[CrewedShip] Hull material polish failed; keeping authored GLB mats.', matErr?.message || matErr);
       }
+      this._applyMeshShadows(loaded);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.log('[CrewedShip] High-detail model not available yet, using placeholder.', err?.message || err);
@@ -387,7 +390,7 @@ export class CrewedShip {
             const n = haze.normalMap.clone(); n.needsUpdate = true;
             n.repeat.set(rep[0], rep[1]); n.wrapS = n.wrapT = THREE.RepeatWrapping;
             mat.normalMap = n;
-            mat.normalScale = new THREE.Vector2(0.30, 0.30);
+            mat.normalScale = new THREE.Vector2(0.38, 0.38);
           }
           if (haze.roughnessMap) {
             const r = haze.roughnessMap.clone(); r.needsUpdate = true;
@@ -446,7 +449,7 @@ export class CrewedShip {
           mat.roughness = 0.48;
           mat.envMapIntensity = 0.25;
         } else {
-          mat.envMapIntensity = isMetal ? 1.45 : (isPaint ? (isHero ? 0.34 : 0.9) : 1.0);
+          mat.envMapIntensity = isMetal ? 1.45 : (isPaint ? (isHero ? 0.42 : 0.9) : 1.0);
         }
         if (isPaint && mat.color) {
           // Cool USN haze grey — hero keeps map albedo (no darkening lerp → charcoal)
@@ -492,7 +495,42 @@ export class CrewedShip {
           mat.clearcoat = Math.min(Math.max(mat.clearcoat || 0, cc), isHero ? 0.1 : 0.28);
           mat.clearcoatRoughness = Math.max(mat.clearcoatRoughness ?? ccr, ccr);
         }
+        // Coplanar nonskid/deck overlays in the Burke GLB z-fight with hull deck paint.
+        const meshName = (o.name || '').toLowerCase();
+        const isDeckOverlay = /nonskid|deck_grate|deck_plate|grate|walkway|helipad|vls_deck|flight_deck/i.test(name)
+          || /nonskid|deck_grate|grate|helipad|vls|flight/i.test(meshName);
+        if (isDeckOverlay) {
+          target.polygonOffset = true;
+          target.polygonOffsetFactor = -1;
+          target.polygonOffsetUnits = -2;
+        }
+        if (/antifoul|boot|underwater|hull_bottom/i.test(name)) {
+          target.polygonOffset = true;
+          target.polygonOffsetFactor = -1;
+          target.polygonOffsetUnits = -1;
+        }
         target.needsUpdate = true;
+      }
+    });
+    this._applyMeshShadows(root);
+  }
+
+  /** Ensure every hull/superstructure mesh participates in sun shadow maps. Glass and
+   * thin transparent panels receive only; opaque structure casts onto decks. */
+  _applyMeshShadows(root, { interior = false } = {}) {
+    if (!root) return;
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      const names = [(o.name || '').toLowerCase(), ...mats.map((m) => (m?.name || '').toLowerCase())].join(' ');
+      const isGlass = /glass|window|mullion|radome|lens|light|marker|iff/i.test(names);
+      const isTransparent = mats.some((m) => m && (m.transparent || (m.opacity != null && m.opacity < 0.92)));
+      if (isGlass || isTransparent) {
+        o.castShadow = false;
+        o.receiveShadow = true;
+      } else {
+        o.castShadow = true;
+        o.receiveShadow = !interior || /floor|deck|wall|bulkhead|console|panel|ceiling|roof/i.test(names);
       }
     });
   }

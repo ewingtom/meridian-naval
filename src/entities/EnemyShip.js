@@ -51,6 +51,8 @@ export class EnemyShip extends Entity {
     this._gunCooldown = 0;
     this._missileCooldown = Math.random() * 8 + 6;
     this._sinkT = 0;
+    this._fleet = null;
+    this._fleetAge = Math.random() * 4;
     scene.add(this.group);
     this._tryUpgradeModel();
   }
@@ -142,6 +144,14 @@ export class EnemyShip extends Entity {
           // Kill plastic chrome: force maritime roughness floor.
           if (typeof mat.roughness === 'number') mat.roughness = Math.max(mat.roughness, 0.45);
           if (typeof mat.metalness === 'number') mat.metalness = Math.min(mat.metalness, 0.35);
+          mat.envMapIntensity = Math.min(mat.envMapIntensity ?? 0.5, 0.42);
+          const meshName = (o.name || '').toLowerCase();
+          const matName = mat.name || '';
+          if (/nonskid|deck_grate|grate|helipad/i.test(matName) || /nonskid|grate|helipad/i.test(meshName)) {
+            mat.polygonOffset = true;
+            mat.polygonOffsetFactor = -1;
+            mat.polygonOffsetUnits = -2;
+          }
           mat.needsUpdate = true;
         }
       });
@@ -183,14 +193,22 @@ export class EnemyShip extends Entity {
 
     const distToPlayer = this.physics.position.distanceTo(playerPos);
     const dmg = this.damage;
-    // Wrecked sensors mean she loses the picture and can't open an engagement
-    // until you're much closer — a real, visible consequence of a bridge or
-    // superstructure hit rather than a hidden stat.
     const sense = dmg.sensorFactor;
     const engageRange = this.engageRangeM * sense;
 
+    // Fleet director may assign a task-force hull other than Meridian.
+    const fleet = this._fleet;
+    const focusPos = fleet?.targetPos?.clone?.()
+      || fleet?.targetShip?.group?.position?.clone?.()
+      || playerPos;
+    const distToFocus = this.physics.position.distanceTo(focusPos);
+
+    // Prefer any crewed ship in range for engagement gate (not only Meridian).
+    const focusInRange = distToFocus < engageRange;
+    const playerInRange = distToPlayer < engageRange;
+
     if (this.state === State.PATROL) {
-      if (this.iff !== 'FRIENDLY' && distToPlayer < engageRange) {
+      if (this.iff !== 'FRIENDLY' && (focusInRange || playerInRange)) {
         this.state = State.ENGAGE;
       } else if (this.patrolPoints.length) {
         const target = this.patrolPoints[this._patrolIdx];
@@ -203,32 +221,36 @@ export class EnemyShip extends Entity {
     } else if (this.state === State.ENGAGE) {
       if (this.iff === 'FRIENDLY') {
         this.state = State.PATROL;
-      } else if (distToPlayer > engageRange * 1.35) {
+      } else if (distToFocus > engageRange * 1.45 && distToPlayer > engageRange * 1.45) {
         this.state = State.PATROL;
       } else {
-        const desiredRange = this.gunRangeM * 0.75;
-        let throttle = distToPlayer > desiredRange ? 0.85 : distToPlayer < desiredRange * 0.6 ? -0.3 : 0.15;
-        // Mission-killed ships stop maneuvering to fight and just try to survive.
+        // Missile doctrine: hold outside gun range at ASM envelope (~0.7× missile range).
+        const desiredRange = this.missileRangeM * 0.62;
+        let throttle = distToFocus > desiredRange * 1.1 ? 0.85 : distToFocus < desiredRange * 0.75 ? -0.25 : 0.12;
         if (dmg.missionKill) throttle = Math.min(throttle, 0.25);
-        this._steerToward(playerPos, throttle);
+        this._steerToward(focusPos, throttle);
 
-        // Firepower kill: fire control / mounts wrecked = she stops shooting.
-        // Degraded (but not dead) fire control just slows her rate of fire.
         if (dmg.weaponsOnline) {
           const rofPenalty = 1 / dmg.fireControlFactor;
+          // Guns are a finisher — only inside close range (modern SAG doctrine).
+          const gunCeiling = fleet?.gunOnlyInsideM ?? 1600;
           this._gunCooldown -= dt;
-          if (distToPlayer < this.gunRangeM * sense && this._gunCooldown <= 0) {
-            this._gunCooldown = (1.4 + Math.random() * 0.8) * rofPenalty;
-            fireWeapon('enemyShell', this._muzzleWorld(), playerPos.clone(), this);
+          if (distToFocus < gunCeiling * sense && this._gunCooldown <= 0) {
+            this._gunCooldown = (2.8 + Math.random() * 1.4) * rofPenalty;
+            fireWeapon('enemyShell', this._muzzleWorld(), focusPos.clone(), this);
           }
+          // Coordinated ASM salvo — staggered by fleet member index.
           this._missileCooldown -= dt;
-          if (distToPlayer < this.missileRangeM * sense && this._missileCooldown <= 0) {
-            this._missileCooldown = (14 + Math.random() * 10) * rofPenalty;
-            fireWeapon('enemyMissile', this._muzzleWorld(), playerPos.clone(), this);
+          const delay = fleet?.missileDelay ?? 0;
+          if (distToFocus < this.missileRangeM * sense && this._missileCooldown <= 0 && this._fleetAge > delay) {
+            this._missileCooldown = (11 + Math.random() * 6) * rofPenalty;
+            fireWeapon('enemyMissile', this._muzzleWorld(), focusPos.clone(), this);
           }
         }
       }
     }
+
+    this._fleetAge = (this._fleetAge || 0) + dt;
 
     // Propulsion damage and flooding drag cap how much way she can make; a
     // steering casualty makes her sluggish on the rudder. Both are applied to

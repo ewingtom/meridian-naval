@@ -4,6 +4,15 @@ const EYE_HEIGHT = 1.72;
 const WALK_SPEED = 3.4;
 const SPRINT_SPEED = 6.0;
 const MOUSE_SENS = 0.0022;
+const _yAxis = new THREE.Vector3(0, 1, 0);
+const _chaseYawQ = new THREE.Quaternion();
+const _chaseLook = new THREE.Vector3();
+const _chasePos = new THREE.Vector3();
+const _chaseM = new THREE.Matrix4();
+const _desiredEuler = new THREE.Euler();
+const _baseEuler = new THREE.Euler();
+const _desiredQ = new THREE.Quaternion();
+const _smoothTrack = new THREE.Vector3();
 
 export const Station = {
   WALK: 'WALK',
@@ -158,6 +167,9 @@ export class PlayerController {
     this.trackTargetPos = null;
     /** Soft lock: keep tactical cam glued to trackTargetPos when true. */
     this.weaponsTrackLock = false;
+    /** Contact currently under the reticle (UI only — does not slew the camera). */
+    this.acquiringTargetId = null;
+    this._hasSmoothTrack = false;
 
     this._bindEvents();
     this._initForShip(playerShip);
@@ -238,31 +250,33 @@ export class PlayerController {
     }
   }
 
+  /** Heading-only yaw for chase/tactical cams — ignores wave pitch/roll so the
+   * director view doesn't whip with every swell. */
+  _shipYawQuaternion(out = _chaseYawQ) {
+    const heading = this.ship.physics?.heading;
+    if (Number.isFinite(heading)) return out.setFromAxisAngle(_yAxis, heading);
+    // Fallback: extract yaw from the full ship quat.
+    const e = _baseEuler.setFromQuaternion(this.ship.group.quaternion, 'YXZ');
+    return out.setFromAxisAngle(_yAxis, e.y);
+  }
+
   /** Current world position+orientation for a station, recomputed live from the
    * ship's present transform (not a snapshot) so it tracks movement/roll/pitch. */
   _stationWorldPose(name, out = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() }) {
     const def = STATION_DEFS[name];
     if (def.cameraMode === 'chase' || def.cameraMode === 'tactical') {
-      // World-space rig, not a ship-local mount point: offset up/behind the hull in
-      // the ship's OWN frame (so it swings around with her as she turns, like a
-      // camera drone slaved to the ship) and look slightly ahead of her bow rather
-      // than straight down at the deck, so forward motion actually reads as motion.
+      // World-space drone slaved to HEADING only (not wave pitch/roll). Looking at a
+      // track is handled separately as a smooth lookYaw/lookPitch assist — never by
+      // rewriting this base quat, which was whipping the weapons view every frame.
       const shipPos = this.ship.group.position;
-      const shipQuat = this.ship.group.quaternion;
-      out.pos.copy(def.chaseOffset).applyQuaternion(shipQuat).add(shipPos);
-      let lookTarget;
-      if (def.cameraMode === 'tactical' && this.trackTargetPos && (this.weaponsTrackLock || this.trackTargetPos)) {
-        // Bias look toward the tracked contact so weapons feels like a director/chase cam.
-        lookTarget = this.trackTargetPos.clone();
-        lookTarget.y += 6;
-      } else {
-        const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(shipQuat);
-        lookTarget = shipPos.clone()
-          .addScaledVector(fwd, def.chaseLookAhead || 0)
-          .add(new THREE.Vector3(0, def.cameraMode === 'tactical' ? 10 : 0, 0));
-      }
-      const m = new THREE.Matrix4().lookAt(out.pos, lookTarget, new THREE.Vector3(0, 1, 0));
-      out.quat.setFromRotationMatrix(m);
+      const yawQ = this._shipYawQuaternion();
+      out.pos.copy(def.chaseOffset).applyQuaternion(yawQ).add(shipPos);
+      _chaseLook.set(0, 0, 1).applyQuaternion(yawQ);
+      const lookTarget = _chasePos.copy(shipPos)
+        .addScaledVector(_chaseLook, def.chaseLookAhead || 0);
+      lookTarget.y += def.cameraMode === 'tactical' ? 10 : 4;
+      _chaseM.lookAt(out.pos, lookTarget, _yAxis);
+      out.quat.setFromRotationMatrix(_chaseM);
       return out;
     }
     const local = this.ship.mountPoints[def.mountKey];
@@ -392,6 +406,59 @@ export class PlayerController {
     return out.copy(shipQuat).multiply(localLookQuat);
   }
 
+  /**
+   * When track-lock is on, gently pull free-look toward the contact instead of
+   * hard-snapping the base camera (which felt like the perspective whipping).
+   */
+  _updateWeaponsTrackAssist(dt) {
+    if (this.state !== Station.WEAPONS || !this.weaponsTrackLock || !this.trackTargetPos) return;
+    const { pos, quat } = this._stationWorldPose(Station.WEAPONS);
+    _chaseLook.copy(this.trackTargetPos);
+    _chaseLook.y += 6;
+    _chaseM.lookAt(pos, _chaseLook, _yAxis);
+    _desiredQ.setFromRotationMatrix(_chaseM);
+    _desiredEuler.setFromQuaternion(_desiredQ, 'YXZ');
+    _baseEuler.setFromQuaternion(quat, 'YXZ');
+
+    let dYaw = _desiredEuler.y - _baseEuler.y;
+    while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+    while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+    const dPitch = THREE.MathUtils.clamp(
+      _desiredEuler.x - _baseEuler.x,
+      this.rig.lookLimits.pitchMin,
+      this.rig.lookLimits.pitchMax
+    );
+
+    // Exponential ease — responsive but never a hard cut.
+    const k = 1 - Math.exp(-5.5 * dt);
+    this.rig.lookYaw += (dYaw - this.rig.lookYaw) * k;
+    this.rig.lookPitch += (dPitch - this.rig.lookPitch) * k;
+    this.rig.lookYaw = THREE.MathUtils.clamp(this.rig.lookYaw, -this.rig.lookLimits.yaw, this.rig.lookLimits.yaw);
+    this.rig.lookPitch = THREE.MathUtils.clamp(
+      this.rig.lookPitch,
+      this.rig.lookLimits.pitchMin,
+      this.rig.lookLimits.pitchMax
+    );
+  }
+
+  /** Smooth the world aimpoint so a maneuvering contact doesn't jerk the assist. */
+  setTrackTarget(aimWorld, dt = 1 / 60) {
+    if (!aimWorld) {
+      this.trackTargetPos = null;
+      this._hasSmoothTrack = false;
+      return;
+    }
+    if (!this._hasSmoothTrack) {
+      _smoothTrack.copy(aimWorld);
+      this._hasSmoothTrack = true;
+    } else {
+      const k = 1 - Math.exp(-7 * Math.max(dt, 1 / 120));
+      _smoothTrack.lerp(aimWorld, k);
+    }
+    if (!this.trackTargetPos) this.trackTargetPos = new THREE.Vector3();
+    this.trackTargetPos.copy(_smoothTrack);
+  }
+
   update(dt) {
     if (this.state === Station.WALK) {
       this._updateWalk(dt);
@@ -402,6 +469,7 @@ export class PlayerController {
       const { pos, quat } = this._stationWorldPose(this.state);
       this.rig.position.copy(pos);
       this.rig.quaternion.copy(quat);
+      this._updateWeaponsTrackAssist(dt);
     } else if (this.state === Station.TRANSITION && this._transitionTarget?.type === 'station') {
       // the ship keeps moving during the blend — chase the live mount pose so we
       // don't arrive at a stale (already-sailed-past) position.

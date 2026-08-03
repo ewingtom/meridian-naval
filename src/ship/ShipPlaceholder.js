@@ -66,8 +66,11 @@ export function buildPlaceholderShip({ length = 180, beam = 21 } = {}) {
   // deck plating tint pass (just recolors main deck strip area visually via a thin plane)
   const deckPlane = new THREE.Mesh(new THREE.PlaneGeometry(beam * 0.94, length * 0.88), matDeck);
   deckPlane.rotation.x = -Math.PI / 2;
-  deckPlane.position.set(0, deckY + 0.03, 0);
+  deckPlane.position.set(0, deckY + 0.06, 0);
   deckPlane.receiveShadow = true;
+  matDeck.polygonOffset = true;
+  matDeck.polygonOffsetFactor = -1;
+  matDeck.polygonOffsetUnits = -1;
   group.add(deckPlane);
 
   // Mount points are calibrated against the high-detail Blender export's actual

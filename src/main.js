@@ -5,6 +5,7 @@ import { OceanField } from './core/ocean.js';
 import { CameraRig } from './core/CameraRig.js';
 import { CrewedShip } from './ship/CrewedShip.js';
 import { ShipAutopilot } from './ai/ShipAutopilot.js';
+import { HostileFleetDirector } from './ai/HostileFleetDirector.js';
 import { MultiplayerSession } from './net/MultiplayerSession.js';
 import { PlayerController, Station, STATION_DEFS } from './player/PlayerController.js';
 import { WeaponsSystem } from './weapons/WeaponsSystem.js';
@@ -35,7 +36,7 @@ sky.onEnvMapUpdated = (tex) => ocean.setEnvMap(tex);
 pipeline.bindSunLight(sky.sunLight);
 
 const fogColor = new THREE.Color(0x9dc3dc);
-scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00028);
+scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00024);
 ocean.setFogColor(fogColor);
 
 // ============================ CREWED SHIPS ============================
@@ -204,14 +205,38 @@ function shakeCamera(mag) { shakeMag = Math.max(shakeMag, mag); }
 // generic weapon spawn used by both hostile AI (targeting the Meridian) and friendly
 // autopilot fire (targeting whatever hostile it picked) — kept as two thin wrappers
 // around the same WeaponsSystem.spawn so damage/explosion/audio all flow one way.
+// Hostile fire homes on whichever task-force hull the fleet director assigned —
+// not always Meridian — so escorts get shot at and the player sees mutual support.
 function fireHostileWeapon(type, from, targetPos, source) {
-  weapons.spawn(type, from, targetPos, { sourceEntity: source, targetEntity: shipProxy(ships.player) });
+  const focus = source?._fleet?.targetShip;
+  const te = focus ? shipProxy(focus) : shipProxy(ships.player);
+  weapons.spawn(type, from, targetPos, { sourceEntity: source, targetEntity: te });
 }
 function fireFriendlyWeapon(type, from, targetPos, source, targetEntity) {
   mp.fireAndRelay((t, f, tp, opts) => weapons.spawn(t, f, tp, opts), type, from, targetPos, { sourceEntity: source, targetEntity });
 }
 function shipProxy(ship) {
-  return { get position() { return ship.group.position; } };
+  return {
+    get position() { return ship.group.position; },
+    getAimPoint(out) {
+      if (out) return out.copy(ship.group.position);
+      return ship.group.position.clone();
+    },
+    get alive() { return ship.alive !== false; },
+    get id() { return ship.id; },
+  };
+}
+
+const hostileFleets = new HostileFleetDirector();
+
+function announceBrainChatter(ship, chatter) {
+  if (!chatter?.text) return;
+  const call = shipCallsign(ship);
+  commsLog.push({
+    speaker: `${call} ${chatter.tag || 'CIC'}`,
+    text: chatter.text,
+    urgency: chatter.tag === 'AAW' || chatter.tag === 'ASW' ? 'warning' : 'normal',
+  });
 }
 
 // ---- AI-crewmate radio chatter: fires from ShipAutopilot.updateWeapons whenever an
@@ -809,7 +834,11 @@ const playerController = new PlayerController({
     if (station !== Station.HELM) headingHold = false;
     if (station !== Station.WEAPONS) {
       playerController.weaponsTrackLock = false;
-      playerController.trackTargetPos = null;
+      playerController.setTrackTarget(null);
+      playerController.acquiringTargetId = null;
+    } else {
+      // Fresh seat — start free-look, no leftover track assist from a prior session.
+      playerController.rig?.resetLook?.();
     }
     // Seat-aware HUD layout — panels hide/reflow so station UI never stacks on ShipHUD.
     const uiRootEl = document.getElementById('ui-root');
@@ -1177,9 +1206,17 @@ function formatBearingSafe(deg) {
   return String(d).padStart(3, '0');
 }
 
+const _sightDir = new THREE.Vector3();
+const _sightTo = new THREE.Vector3();
+const _sightAim = new THREE.Vector3();
+const _trackAim = new THREE.Vector3();
+let _landAimpoints = null;
+
 function getLandAimpoints() {
   // Synthetic shore objectives for LACM — islands are scenery, not Entity subclasses.
-  return [
+  // Cached: rebuilt every frame previously and trashed the GC while scanning.
+  if (_landAimpoints) return _landAimpoints;
+  _landAimpoints = [
     {
       id: 'land:alpha',
       name: 'OBJ ALPHA (ISLAND)',
@@ -1207,34 +1244,31 @@ function getLandAimpoints() {
       get position() { return islet.group.position; },
     },
   ];
+  return _landAimpoints;
 }
 
 function findLandTargetById(id) {
+  if (!id) return null;
   return getLandAimpoints().find((t) => t.id === id) || null;
 }
 
 function findSightedContact({ threshold = 0.82, maxDist = 5000, includeLand = false } = {}) {
-  const camDir = new THREE.Vector3();
-  camera.getWorldDirection(camDir);
+  camera.getWorldDirection(_sightDir);
   const origin = camera.position;
   let best = null;
   let bestScore = threshold;
-  const sources = [
-    ...world.entities,
-    ...Object.values(ships).filter((s) => s !== localShip),
-    ...(includeLand ? getLandAimpoints() : []),
-  ];
-  for (const e of sources) {
-    if (!e || e.destroyed || e.alive === false) continue;
+  const sources = world.entities;
+  const check = (e) => {
+    if (!e || e.destroyed || e.alive === false) return;
     const pos = e.getAimPoint
-      ? e.getAimPoint(new THREE.Vector3())
+      ? e.getAimPoint(_sightAim)
       : (e.position || e.group?.position);
-    if (!pos) continue;
-    const to = pos.clone().sub(origin);
-    const dist = to.length();
-    if (dist < 40 || dist > maxDist) continue;
-    to.normalize();
-    const align = camDir.dot(to);
+    if (!pos) return;
+    _sightTo.copy(pos).sub(origin);
+    const dist = _sightTo.length();
+    if (dist < 40 || dist > maxDist) return;
+    _sightTo.multiplyScalar(1 / dist);
+    const align = _sightDir.dot(_sightTo);
     if (align > bestScore) {
       bestScore = align;
       best = {
@@ -1247,6 +1281,13 @@ function findSightedContact({ threshold = 0.82, maxDist = 5000, includeLand = fa
         align,
       };
     }
+  };
+  for (const e of sources) check(e);
+  for (const s of Object.values(ships)) {
+    if (s !== localShip) check(s);
+  }
+  if (includeLand) {
+    for (const land of getLandAimpoints()) check(land);
   }
   return best;
 }
@@ -1334,8 +1375,15 @@ let rudderCmd = 0;
 let lastContacts = [];
 let hostileWaveSpawned = false;
 window.GAME.setHelmCommand = (throttle, rudder = 0) => {
-  throttleCmd = THREE.MathUtils.clamp(throttle, -1, 1);
-  rudderCmd = THREE.MathUtils.clamp(rudder, -1, 1);
+  // Accept either (throttle, rudder) or ({ throttle, rudder }) for debug/judge scripts.
+  if (throttle && typeof throttle === 'object') {
+    rudder = throttle.rudder ?? 0;
+    throttle = throttle.throttle ?? 0;
+  }
+  const t = Number(throttle);
+  const r = Number(rudder);
+  throttleCmd = THREE.MathUtils.clamp(Number.isFinite(t) ? t : 0, -1, 1);
+  rudderCmd = THREE.MathUtils.clamp(Number.isFinite(r) ? r : 0, -1, 1);
 };
 window.GAME.ensureSimRunning = () => {
   // Judge / debug: skip stuck intro / lose overlays so the main loop keeps integrating.
@@ -1394,47 +1442,41 @@ function animate() {
       ship.networked = !mp.iSimulateShip(shipId);
       if (!ship.networked) {
         const helmHuman = mp.helmIsHuman(shipId);
+        const weaponsHuman = mp.weaponsIsHuman(shipId);
         if (helmHuman) {
-          // Local human is seated at HELM — drive from telegraph/rudder commands.
           if (ship === localShip) ship.setCommand(throttleCmd, rudderCmd);
-        } else {
-          // AI has the conn (solo: player is at another station or walking).
+        }
+        // Unified brain tick when AI holds helm and/or weapons.
+        if (!helmHuman || !weaponsHuman) {
           const engageEnt = taskForce.sharedTargetId
             ? world.entities.find((e) => e.id === taskForce.sharedTargetId && !e.destroyed)
             : null;
           const ap = autopilots[shipId];
-          // Meridian AI helm closes a shared free-fire track instead of idling on the waypoint.
+          ap.helmEnabled = !helmHuman;
+          ap.weaponsEnabled = !weaponsHuman;
           if (ap.role === 'lead') {
             ap.breakFormation = taskForce.weaponsPolicy === 'free' && !!engageEnt;
           }
-          ap.updateHelm(dt, {
+          ap.setEngageTarget(taskForce.sharedTargetId);
+          ap.update(dt, {
             anchorShip: ships.player,
+            playerShip: ships.player,
+            ships,
             waypoint: mission.currentWaypoint,
             engageWorldPos: engageEnt?.position || null,
-          });
-        }
-        if (!mp.weaponsIsHuman(shipId)) {
-          autopilots[shipId].updateWeapons(dt, {
             hostiles: world.hostiles,
             fireWeapon: fireFriendlyWeapon,
             onEngage: (autoShip, target) => announceAiEngagement(autoShip, target),
             onDisengage: (autoShip) => announceAiDisengagement(autoShip),
+            onBrainChatter: announceBrainChatter,
             weaponsPolicy: taskForce.weaponsPolicy,
             sharedTargetId: taskForce.sharedTargetId,
+            allies: Object.values(ships),
           });
         }
       }
-      // networked ships still need update() every frame — it's what lerps the
-      // physics transform toward the last received network state and applies it
-      // to the group; skipping it (as an earlier version of this loop did) left
-      // replicated ships visually frozen at their spawn position forever, even
-      // though the network state was arriving and being stored correctly.
       ship.update(dt, elapsed, getWaveHeight);
       if (!ship.networked) {
-        // Damage Control doctrine hook: only the LOCAL human's actively-held key
-        // speeds up suppression, and only for whichever ship they're actually
-        // standing on — every ship still gets the slow passive AI baseline so a
-        // fire on an escort nobody's aboard doesn't just burn forever unchecked.
         const fighting = ship === localShip && gameStarted && playerController.keys.has('KeyX');
         ship.updateDamageControl(dt, { fighting });
       }
@@ -1469,6 +1511,12 @@ function animate() {
       updateAiCoordination();
       coopPanel.update(taskForce.status);
     }
+    hostileFleets.update({
+      hostiles: world.hostiles,
+      taskForce: Object.values(ships).filter((s) => s.alive !== false),
+      playerShip: ships.player,
+      dt,
+    });
     world.update(dt, {
       playerPos: ships.player.group.position,
       playerShip: ships.player,
@@ -1580,16 +1628,19 @@ function animate() {
       });
     }
 
-    // Weapons director: soft-acquire contacts that pass through the reticle while scanning.
+    // Weapons director: highlight contacts under the reticle without stealing the
+    // designation or slewing the camera (that was whipping the perspective).
     let weaponsAcquiring = false;
     if (playerController.state === Station.WEAPONS) {
-      const sighted = findSightedContact({ threshold: 0.90, maxDist: 9000, includeLand: true });
+      const sighted = findSightedContact({ threshold: 0.92, maxDist: 9000, includeLand: true });
       if (sighted?.entity) {
         weaponsAcquiring = true;
-        if (!playerController.weaponsTrackLock || weapons.selectedTargetId === sighted.entity.id) {
-          weapons.selectedTargetId = sighted.entity.id;
-        }
+        playerController.acquiringTargetId = sighted.entity.id;
+      } else {
+        playerController.acquiringTargetId = null;
       }
+    } else {
+      playerController.acquiringTargetId = null;
     }
 
     const filteredContacts = lastContacts.filter((c) => {
@@ -1614,13 +1665,17 @@ function animate() {
       })),
     });
 
-    // Weapons director camera tracks the designated live entity (or land aimpoint).
-    const trackEnt = world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive)
-      || findLandTargetById(weapons.selectedTargetId);
+    // Smooth aimpoint for track-lock assist (camera only follows when lock is on).
+    const trackEnt = (playerController.state === Station.WEAPONS && playerController.weaponsTrackLock)
+      ? (world.entities.find((e) => e.id === weapons.selectedTargetId && e.alive)
+        || findLandTargetById(weapons.selectedTargetId))
+      : null;
     if (trackEnt?.getAimPoint) {
-      playerController.trackTargetPos = trackEnt.getAimPoint(new THREE.Vector3());
+      playerController.setTrackTarget(trackEnt.getAimPoint(_trackAim), dt);
+    } else if (trackEnt?.position) {
+      playerController.setTrackTarget(trackEnt.position, dt);
     } else {
-      playerController.trackTargetPos = trackEnt?.position ? trackEnt.position.clone() : null;
+      playerController.setTrackTarget(null, dt);
     }
 
     // Station overlay instruments — only when seated so we don't burn DOM writes while walking.

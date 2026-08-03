@@ -66,10 +66,12 @@ const VIGNETTE_GRADE_SHADER = {
       c += vec3(-0.008, -0.003, 0.01) * shadowW + vec3(0.01, 0.004, -0.01) * highlightW;
       vec2 d = vUv - 0.5;
       c *= 1.0 - dot(d, d) * uVignetteStrength;
+      // Always-on luma dither — breaks fog/sky gradient banding left in the post chain
+      float dither = (hash(vUv * vec2(127.1, 311.7) + uTime * 0.37) - 0.5) * (1.0 / 255.0) * 2.5;
+      c += dither;
       if (uGrainAmount > 0.0001) {
         float g = (hash(vUv * vec2(1920.0, 1080.0) + uTime) - 0.5) * uGrainAmount;
-        float dither = (hash(vUv * vec2(127.1, 311.7) + uTime * 0.37) - 0.5) * (1.0 / 255.0) * 2.0;
-        c += g + dither;
+        c += g;
       }
       gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
     }
@@ -201,9 +203,9 @@ export class RenderPipeline {
       // (which never gets that bright); re-enable bloom using those already-tuned,
       // conservative values instead of cutting the effect entirely.
       this.bloomPass.enabled = usePost;
-      this.bloomPass.strength = 0.08;
-      this.bloomPass.threshold = 0.92;
-      this.bloomPass.radius = 0.35;
+      this.bloomPass.strength = 0.06;
+      this.bloomPass.threshold = 0.94;
+      this.bloomPass.radius = 0.32;
     }
     if (this.gradePass) {
       this.gradePass.enabled = usePost;
@@ -226,13 +228,16 @@ export class RenderPipeline {
     }
 
     if (this._sunLight) {
-      const map = q === 'ultra' ? 4096 : q === 'high' ? 2048 : q === 'medium' ? 1024 : 512;
+      const map = q === 'ultra' ? 4096 : q === 'high' ? 3072 : q === 'medium' ? 2048 : 512;
       if (this._sunLight.shadow.mapSize.x !== map) {
         this._sunLight.shadow.mapSize.set(map, map);
         this._sunLight.shadow.map?.dispose();
         this._sunLight.shadow.map = null;
       }
       this._sunLight.castShadow = q !== 'low';
+      // Slightly wider frustum on medium so escorts in formation still cast; high/ultra
+      // stay tight for crisp hero deck/superstructure contact shadows.
+      this._sunLight.userData.shadowHalfExtent = q === 'medium' ? 220 : q === 'low' ? 280 : 165;
     }
 
     // Slight exposure lift on High for glitter / ocean specular

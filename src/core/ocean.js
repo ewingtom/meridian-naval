@@ -1,15 +1,18 @@
 import * as THREE from 'three';
 
 // Gerstner wave parameters: [dirX, dirZ, steepness, wavelength, speed]
+// Wavelengths stay irrational ratios so mid-field doesn't lock into a waffle lattice.
 const WAVE_SET = [
-  [1.0, 0.2, 0.38, 82.0, 1.05],
-  [0.65, -0.75, 0.32, 52.0, 1.28],
-  [-0.4, 0.9, 0.26, 34.0, 1.65],
-  [0.9, 0.5, 0.19, 21.0, 2.05],
-  [-0.75, -0.6, 0.15, 13.0, 2.55],
-  [0.2, -1.0, 0.11, 7.8, 3.35],
-  [-1.0, 0.15, 0.085, 4.4, 4.2],
-  [0.55, 0.83, 0.06, 2.5, 5.5],
+  [1.0, 0.18, 0.36, 91.0, 1.02],
+  [0.62, -0.78, 0.30, 57.0, 1.22],
+  [-0.42, 0.91, 0.25, 37.0, 1.58],
+  [0.88, 0.48, 0.18, 23.5, 1.98],
+  [-0.78, -0.58, 0.14, 14.7, 2.48],
+  [0.22, -1.0, 0.11, 9.1, 3.15],
+  [-0.97, 0.18, 0.085, 5.7, 3.95],
+  [0.52, 0.85, 0.06, 3.3, 5.1],
+  [0.15, 0.99, 0.045, 17.3, 2.2],
+  [-0.55, 0.70, 0.04, 11.2, 2.85],
 ];
 
 function buildWaveGLSL() {
@@ -42,8 +45,8 @@ vec3 gerstner(vec3 p, float t, vec3 camPos, out vec3 tangent, out vec3 binormal)
     float k = 6.28318530718 / wavelength;
     float c = sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
     float f = k * (dot(dir, p.xz) - c * t * 3.0);
-    float distFade = 1.0 - smoothstep(wavelength * 16.0, wavelength * 32.0, distToCam);
-    float a = steepness / k / float(NUM_WAVES) * 3.35 * mix(1.0, distFade, step(wavelength, 25.0));
+    float distFade = 1.0 - smoothstep(wavelength * 10.0, wavelength * 26.0, distToCam);
+    float a = steepness / k / float(NUM_WAVES) * 3.35 * mix(1.0, distFade, step(wavelength, 38.0));
     offset.x += dir.x * a * cos(f);
     offset.z += dir.y * a * cos(f);
     offset.y += a * sin(f) * 0.92;
@@ -208,7 +211,7 @@ void main() {
   vec3 reflectDir = reflect(-viewDir, N);
   vec3 reflColor = textureCube(uEnvMap, reflectDir).rgb;
   // Boost sky reflection so distant water reads like glass, not matte paint
-  reflColor *= 1.18;
+  reflColor *= 1.06;
 
   float depthMix = clamp(dot(N, vec3(0.0,1.0,0.0)), 0.0, 1.0);
   vec3 waterColor = mix(uDeepColor, uShallowColor, pow(depthMix, 2.4) * 0.55);
@@ -216,7 +219,7 @@ void main() {
   vec3 halfDir = normalize(uSunDirection + viewDir);
   float NdotH = clamp(dot(N, halfDir), 0.0, 1.0);
   // Tight glitter + mid lobe — avoid giant cyan specular pancake at chase altitude
-  float spec = min(pow(NdotH, 720.0) * 0.55, 0.65);
+  float spec = min(pow(NdotH, 720.0) * 0.48, 0.42);
   float sparkle = nearDetail > 0.2
     ? smoothstep(0.97, 1.0, noise(vWorldPos.xz * 14.0 + uTime * 2.4))
     : 0.0;
@@ -275,7 +278,7 @@ void main() {
     float wakeAge = exp(-max(0.0, -along) * 0.0032);
     float breakup = lace * streak * (0.45 + 0.55 * sin(along * 0.12 + uTime * 1.1 + side * 0.08));
     // Prefer stern + Kelvin (readable chase V) over bow contact foam
-    hullFoam = (sternLane * 2.2 + kelvinArm * 2.6 + bow * 0.55 + moundFoam) * spd * wakeAge;
+    hullFoam = (sternLane * 2.0 + kelvinArm * 2.35 + bow * 0.5 + moundFoam) * spd * wakeAge;
     hullFoam *= 0.4 + 0.6 * breakup;
   }
   // Never paint foam on hull flanks or inside the waterline bloom ring
@@ -290,9 +293,9 @@ void main() {
   hullFoam = max(hullFoam, 0.0);
   foamMask = max(foamMask, clamp(hullFoam, 0.0, 1.0));
 
-  // Soft foam — never near-white at contact (emissive skirt FAIL)
-  vec3 foamCrest = vec3(0.68, 0.74, 0.76);
-  vec3 foamBase = vec3(0.40, 0.50, 0.54);
+  // Soft foam — never near-white at contact (emissive skirt FAIL / bloom pickup)
+  vec3 foamCrest = vec3(0.58, 0.64, 0.66);
+  vec3 foamBase = vec3(0.36, 0.46, 0.50);
   vec3 foamColor = mix(foamBase, foamCrest, clamp(hullFoam * 0.55 + foamMask * 0.08, 0.0, 1.0));
 
   // Distant water deepens + desaturates (beer-lambert-ish) so the near field pops
@@ -327,20 +330,23 @@ void main() {
   base *= (1.0 - wetBand * 0.7);
   base = mix(base, uDeepColor * 0.5, clamp(wakeTrough + (1.0 - contactKill) * 0.35, 0.0, 0.75));
   // Foam outside waterline ring — stern/Kelvin must read at chase altitude
-  float foamAmt = clamp(foamMask, 0.0, 1.0) * 0.78
+  float foamAmt = clamp(foamMask, 0.0, 1.0) * 0.68
     * (1.0 - besideHull * 0.95) * (1.0 - waterlineRing * 0.92);
   base = mix(base, foamColor, foamAmt);
   base += foamCrest * clamp(hullFoam, 0.0, 1.0) * 0.09
     * (1.0 - besideHull) * (1.0 - waterlineRing);
   // Skirt blend uses deeper water tint, not fog gray — reduces hard horizon seam
-  vec3 skirtTint = mix(uDeepColor * 0.85, uFogColor * 0.55, 0.35);
-  base = mix(base, skirtTint, edgeFade);
+  vec3 skirtTint = mix(uDeepColor * 0.88, uFogColor * 0.72, 0.55);
+  base = mix(base, skirtTint, edgeFade * 0.85);
 
   // Distance fog — softstep to reduce banding on large flat gradients
   float fog = 1.0 - exp(-dist * uFogDensity);
   fog = clamp(fog, 0.0, 1.0);
   fog = smoothstep(0.0, 1.0, fog);
-  float dither = (hash(gl_FragCoord.xy * 0.15 + uTime) - 0.5) * (1.5 / 255.0);
+  // Break fog ramp banding before the final mix
+  fog += (hash(gl_FragCoord.xy * 0.2 + uTime * 0.11) - 0.5) * 0.014;
+  fog = clamp(fog, 0.0, 1.0);
+  float dither = (hash(gl_FragCoord.xy * 0.15 + uTime) - 0.5) * (2.4 / 255.0);
   vec3 color = mix(base, uFogColor, fog * 0.9) + dither;
 
   gl_FragColor = vec4(color, 1.0);
@@ -351,9 +357,9 @@ export class OceanField {
   constructor(renderer, sunDirection) {
     this.renderer = renderer;
 
-    // 220² (~97k tris) — smoother Gerstner silhouette at chase altitude vs 160².
+    // 260² (~135k tris) — denser Gerstner sampling cuts mid-field waffle aliasing.
     this.size = 2800;
-    this.segments = 220;
+    this.segments = 260;
     const geo = new THREE.PlaneGeometry(this.size, this.size, this.segments, this.segments);
     geo.rotateX(-Math.PI / 2);
     geo.computeBoundingSphere();
@@ -387,6 +393,10 @@ export class OceanField {
       uniforms: this.uniforms,
       lights: false,
       fog: false,
+      // Bias ocean slightly back so hull antifoul wins the waterline depth test
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 4,
     });
 
     this.mesh = new THREE.Mesh(geo, this.material);
@@ -402,11 +412,11 @@ export class OceanField {
       color: 0x0b3c46,
       fog: false,
       transparent: true,
-      opacity: 0.78,
+      opacity: 0.62,
       depthWrite: false,
     });
     this.skirt = new THREE.Mesh(skirtGeo, this.skirtMat);
-    this.skirt.position.y = -0.55;
+    this.skirt.position.y = -0.85;
     this.skirt.renderOrder = -1;
 
     this.group = new THREE.Group();
