@@ -429,11 +429,16 @@
   transform: scale(0.85);
   transform-origin: top center;
 }
+/* Was docked bottom-right (right:18/bottom:18) — landed squarely on top of the
+   AEGIS console's own "Hooked Track — Fire Control" panel, which lives in that
+   same corner (see .stn-aegis .stn-radar-side in stations.css). Re-docked
+   bottom-left instead, over the plot's own corner — the same tradeoff
+   RADAR/SONAR already accept for their GCCS-M chart, just below. */
 #ui-root[data-seat="TAO"] .comms-log {
-  right: 18px;
-  left: auto;
-  bottom: 18px;
-  width: min(240px, 20vw);
+  left: 340px;
+  right: auto;
+  bottom: 28px;
+  width: min(260px, 24vw);
   max-height: 160px;
 }
 

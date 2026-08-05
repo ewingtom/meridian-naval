@@ -33,8 +33,11 @@ export const Objective = {
   SELF_PRESERVE: 'SELF_PRESERVE',
 };
 
-/** Engagement envelope (metres) — missile-heavy, gun as last resort. */
-const ENVELOPE = {
+/** Engagement envelope (metres) — missile-heavy, gun as last resort. Exported so
+ *  the AEGIS console can draw a non-fabricated engagement-envelope reference
+ *  ring for a hooked track, using the same doctrine numbers the AI itself
+ *  fires by, rather than inventing a display-only figure. */
+export const ENVELOPE = {
   asmMin: 900,
   asmMax: 5200,
   samMax: 9000,

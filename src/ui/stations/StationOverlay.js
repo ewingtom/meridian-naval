@@ -7,6 +7,7 @@
 
 import './stations.css';
 import { el, formatBearing, formatDistance } from '../lib/utils.js';
+import { ENVELOPE } from '../../ai/ShipBrain.js';
 
 const WEAPON_SLOTS = [
   { key: 'gun', digit: '1', name: '130mm Deck Gun', infinite: true, role: 'SURFACE / AIR' },
@@ -445,6 +446,7 @@ export class StationOverlay {
             </div>
             <div class="aegis-chartwrap">
               <canvas class="aegis-canvas"></canvas>
+              <div class="aegis-ping-pulse" data-aeg="ping"><i></i></div>
             </div>
             <div class="aegis-statusbar">
               <span data-aeg="cursor">BRG --- / RNG ---</span>
@@ -569,17 +571,40 @@ export class StationOverlay {
       detail: this.root.querySelector('[data-aeg="detail"]'),
       doctrine: this.root.querySelector('[data-aeg="doctrine"]'),
       designated: this.root.querySelector('[data-aeg="designated"]'),
+      ping: this.root.querySelector('[data-aeg="ping"]'),
     };
     this._aegCtx = this._aeg.canvas.getContext('2d');
     this._aegDpr = Math.min(window.devicePixelRatio || 1, 2);
     this._aegSelectedId = null;
     this._aegLastContacts = [];
     this._aegRangeM = 9000;
+    this._aegManualRange = false;
+    this._aegCursor = null;
+    this._aegHoverId = null;
+    this._aegRedrawQueued = false;
     this._resizeAegisCanvas();
     if (typeof ResizeObserver !== 'undefined') {
       this._aegRO = new ResizeObserver(() => this._resizeAegisCanvas());
       this._aegRO.observe(this._aeg.canvas.parentElement);
     }
+    // Click-to-hook — the documented real-AEGIS interaction (trackball "HOOK A
+    // TRACK") this console's crosshair cursor and hint text already promise.
+    // Mirrors GCCS-M's _onTaoCanvasClick/_onTaoCanvasHover/_taoPick pattern below.
+    this._aeg.canvas.addEventListener('click', (e) => this._onAegisCanvasClick(e));
+    this._aeg.canvas.addEventListener('mousemove', (e) => this._onAegisCanvasHover(e));
+    this._aeg.canvas.addEventListener('mouseleave', () => {
+      this._aegCursor = null;
+      this._aegHoverId = null;
+      if (this._aeg.cursor) this._aeg.cursor.textContent = 'BRG --- / RNG ---';
+      this._queueAegisRedraw();
+    });
+    this._aeg.canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this._aegManualRange = true;
+      const f = e.deltaY > 0 ? 1.18 : 1 / 1.18;
+      this._aegRangeM = Math.max(2000, Math.min(80000, this._aegRangeM * f));
+      this._queueAegisRedraw();
+    }, { passive: false });
 
     this._taoCtx = this._tao.canvas.getContext('2d');
     this._taoDpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -692,7 +717,11 @@ export class StationOverlay {
   }
 
   triggerSonarPulse() {
-    for (const el of [this._snr.sonar]) {
+    // Same "N — Ping" order fires this at any station; SONAR gets the sweep bar,
+    // TAO's AEGIS console gets its own expanding-ring feedback below — previously
+    // the doctrine bar's "N Ping" hint fired the order with zero visual response
+    // on this console.
+    for (const el of [this._snr.sonar, this._aeg?.ping]) {
       if (!el) continue;
       el.classList.remove('is-active');
       void el.offsetWidth;
@@ -872,7 +901,7 @@ export class StationOverlay {
     const contacts = (s.allContacts || []).filter((c) => !c.isWaypoint);
     this._aegLastContacts = contacts;
     if (s.selectedTargetId) this._aegSelectedId = s.selectedTargetId;
-    if (s.rangeM) this._aegRangeM = Math.max(s.rangeM * 1.5, 6000);
+    if (s.rangeM && !this._aegManualRange) this._aegRangeM = Math.max(s.rangeM * 1.5, 6000);
     // Live IFF-interrogation readout (see IdentificationTracker.js /
     // main.js beginIffInterrogation) — read by _renderAegisDetail below.
     this._aegInterrogation = s.interrogation || null;
@@ -1000,6 +1029,57 @@ export class StationOverlay {
     this._drawAegisChart();
   }
 
+  /** Geometry shared by _aegPick and _drawAegisChart so a click always lands on
+   *  exactly the symbol the operator sees — same rationale as _taoGeom. */
+  _aegGeom() {
+    const dpr = this._aegDpr;
+    const w = this._aeg.canvas.width / dpr;
+    const h = this._aeg.canvas.height / dpr;
+    const cx = w / 2, cy = h / 2;
+    const R = Math.max(Math.min(w, h) / 2 - 22, 40);
+    return { w, h, cx, cy, R, scale: R / this._aegRangeM };
+  }
+
+  _aegPick(px, py) {
+    const g = this._aegGeom();
+    let best = null, bestD = 18;
+    for (const c of this._aegLastContacts) {
+      if (c.x == null || c.z == null) continue;
+      const sx = g.cx + c.x * g.scale, sy = g.cy - c.z * g.scale;
+      const d = Math.hypot(px - sx, py - sy);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
+
+  _onAegisCanvasClick(e) {
+    const rect = this._aeg.canvas.getBoundingClientRect();
+    const hit = this._aegPick(e.clientX - rect.left, e.clientY - rect.top);
+    if (hit) {
+      this._aegSelectedId = hit.id;
+      this.onSelectContact?.(hit.id);
+      this._renderAegisDetail(hit, {});
+    }
+    this._queueAegisRedraw();
+  }
+
+  _onAegisCanvasHover(e) {
+    const rect = this._aeg.canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    this._aegCursor = { px, py };
+    const hit = this._aegPick(px, py);
+    this._aegHoverId = hit ? hit.id : null;
+    this._aeg.canvas.style.cursor = hit ? 'pointer' : 'crosshair';
+
+    const g = this._aegGeom();
+    const relX = (px - g.cx) / g.scale;
+    const relZ = (g.cy - py) / g.scale;
+    const brg = ((Math.atan2(relX, relZ) * 180) / Math.PI + 360) % 360;
+    const rng = Math.hypot(relX, relZ) / NM_M;
+    if (this._aeg.cursor) this._aeg.cursor.textContent = `BRG ${formatBearing(brg)}T / RNG ${rng.toFixed(1)} NM`;
+    this._queueAegisRedraw();
+  }
+
   /** Own-ship-centred polar threat plot — a heading-up sensor scope (unlike Radar's
    * north-up GCCS-M chart), since this is reading the ship's own SPY array rather
    * than a fused geographic COP. Deliberately simpler than the GCCS-M chart (no
@@ -1055,9 +1135,43 @@ export class StationOverlay {
     ctx.stroke();
     ctx.restore();
 
-    // Contacts — simple MIL-STD-2525-flavored frames (circle friend / diamond hostile
-    // / square neutral / dashed diamond unknown), reusing the same affiliation colors
-    // as the track table so the plot and the table always agree.
+    // Weapon-engagement-envelope reference ring for the hooked track, if any —
+    // uses ShipBrain's own ENVELOPE doctrine constants (the same numbers the AI
+    // fires by), keyed to the hooked contact's domain, rather than a display-only
+    // invented figure. Only drawn for a hooked track so the plot doesn't clutter
+    // with three overlapping rings when nothing is designated.
+    const hookedForEnvelope = this._aegLastContacts.find((c) => String(c.id) === String(this._aegSelectedId));
+    if (hookedForEnvelope) {
+      const dom = String(hookedForEnvelope.domain || '').toUpperCase();
+      const envelopeM = dom === 'AIR' ? ENVELOPE.samMax
+        : dom === 'SUBSURFACE' ? ENVELOPE.torpedoMax
+        : dom === 'SURFACE' ? ENVELOPE.asmMax
+        : null;
+      if (envelopeM && envelopeM <= this._aegRangeM * 1.4) {
+        const er = envelopeM * scale;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 176, 46, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, er, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = '9px ui-monospace, monospace';
+        ctx.fillStyle = 'rgba(255, 176, 46, 0.7)';
+        ctx.fillText('WPN ENVELOPE', cx + 4, cy - er - 4);
+        ctx.restore();
+      }
+    }
+
+    // Contacts — NTDS-flavored frames (circle friend / diamond hostile / square
+    // neutral / dashed square unknown — dashed diamond was confusable with a
+    // solid hostile diamond at a glance, defeating the point of shape-coding),
+    // reusing the same affiliation colors as the track table so the plot and the
+    // table always agree. NTDS, not MIL-STD-2525, is the symbology family
+    // documented for the real AEGIS Display System console (1994 VT thesis on
+    // ADS GUI design) — the two happen to share this basic shape vocabulary, but
+    // citing the wrong standard would misrepresent the console's own accuracy.
     for (const c of this._aegLastContacts) {
       if (c.x == null || c.z == null) continue;
       const sx = cx + c.x * scale, sy = cy - c.z * scale;
@@ -1076,9 +1190,14 @@ export class StationOverlay {
         ctx.moveTo(sx, sy - sz); ctx.lineTo(sx + sz, sy); ctx.lineTo(sx, sy + sz); ctx.lineTo(sx - sz, sy); ctx.closePath();
       } else if (a.key === 'neutral') {
         ctx.rect(sx - sz, sy - sz, sz * 2, sz * 2);
-      } else {
+      } else if (a.key === 'suspect') {
+        // Diamond frame (hostile's shape family) but dashed — "could become
+        // hostile," unlike plain 'unknown' below which carries no hostile lean.
         ctx.setLineDash([2, 2]);
         ctx.moveTo(sx, sy - sz); ctx.lineTo(sx + sz, sy); ctx.lineTo(sx, sy + sz); ctx.lineTo(sx - sz, sy); ctx.closePath();
+      } else {
+        ctx.setLineDash([2, 2]);
+        ctx.rect(sx - sz, sy - sz, sz * 2, sz * 2);
       }
       ctx.stroke();
       ctx.setLineDash([]);

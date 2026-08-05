@@ -18,6 +18,24 @@ export class HostileFleetDirector {
     this._scratch = new THREE.Vector3();
   }
 
+  /** Closest task-force hull to `originPos`, biased toward Meridian and toward hulls
+   * already hurting. Shared scoring so air/sub target picks (below) stay consistent
+   * with the surface action groups' doctrine instead of drifting from a second,
+   * independently-tuned copy of the same bias. */
+  _pickTarget(originPos, tf, ctx) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const ship of tf) {
+      const d = distFlat(originPos, ship.group.position);
+      let score = 8000 - d;
+      if (ship.damage?.fire > 0.1) score += 600;
+      if (ship.damage?.structurePct < 0.7) score += 400;
+      if (ship === ctx.playerShip) score += 250; // prefer Meridian slightly
+      if (score > bestScore) { bestScore = score; best = ship; }
+    }
+    return best;
+  }
+
   /**
    * @param {object} ctx
    *   hostiles: Entity[]
@@ -25,11 +43,30 @@ export class HostileFleetDirector {
    *   dt
    */
   update(ctx) {
-    const surfaces = (ctx.hostiles || []).filter(
-      (h) => h.alive && !h.destroyed && String(h.domain).toUpperCase() === 'SURFACE' && h.iff !== 'FRIENDLY'
-    );
+    const allHostiles = (ctx.hostiles || []).filter((h) => h.alive && !h.destroyed && h.iff !== 'FRIENDLY');
+    const surfaces = allHostiles.filter((h) => String(h.domain).toUpperCase() === 'SURFACE');
+    const airSub = allHostiles.filter((h) => String(h.domain).toUpperCase() !== 'SURFACE');
     const tf = (ctx.taskForce || []).filter((s) => s.alive !== false && !s.destroyed);
-    if (!surfaces.length || !tf.length) {
+
+    if (!tf.length) {
+      this.groups = [];
+      for (const h of allHostiles) h._fleet = null;
+      return;
+    }
+
+    // --- Air / subsurface hostiles: aircraft and submarines don't stage coordinated
+    // salvos the way a surface action group does, so each contact just gets its own
+    // "who am I actually going after" pick — same target-selection doctrine as the
+    // surface groups below (reused via _pickTarget), so an inbound bandit or a
+    // stalking submarine sometimes goes after an escort instead of fixating on
+    // Meridian, matching what EnemyShip.js already does for surface threats.
+    for (const h of airSub) {
+      const originPos = h.physics?.position || h.position;
+      const targetShip = this._pickTarget(originPos, tf, ctx);
+      h._fleet = targetShip ? { targetShip, targetPos: targetShip.group.position } : null;
+    }
+
+    if (!surfaces.length) {
       this.groups = [];
       return;
     }
@@ -55,16 +92,7 @@ export class HostileFleetDirector {
       });
       const leader = members[0];
       // Target: closest task-force hull to the leader, with a bias toward the damaged lead.
-      let best = null;
-      let bestScore = -Infinity;
-      for (const ship of tf) {
-        const d = distFlat(leader.physics.position, ship.group.position);
-        let score = 8000 - d;
-        if (ship.damage?.fire > 0.1) score += 600;
-        if (ship.damage?.structurePct < 0.7) score += 400;
-        if (ship === ctx.playerShip) score += 250; // prefer Meridian slightly
-        if (score > bestScore) { bestScore = score; best = ship; }
-      }
+      const best = this._pickTarget(leader.physics.position, tf, ctx);
       groups.push({
         leader,
         members,

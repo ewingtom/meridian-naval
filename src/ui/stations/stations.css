@@ -1101,6 +1101,29 @@
   border-top: 1px solid rgba(0, 0, 0, 0.6);
 }
 .aegis-canvas { display: block; width: 100%; height: 100%; }
+.aegis-ping-pulse {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.aegis-ping-pulse > i {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ag-text);
+  opacity: 0;
+}
+.aegis-ping-pulse.is-active > i {
+  animation: aegis-ping-expand 1.6s cubic-bezier(0.1, 0.6, 0.3, 1);
+}
+@keyframes aegis-ping-expand {
+  0% { width: 10px; height: 10px; opacity: 0.9; border-width: 2px; }
+  100% { width: 70vmin; height: 70vmin; opacity: 0; border-width: 0.5px; }
+}
 
 .aegis-statusbar {
   flex: none;

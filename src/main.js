@@ -1760,7 +1760,16 @@ function animate() {
     // exclude whichever ship the local human is actually standing on (no need for a
     // radar blip of yourself), same as single-player never showing the player ship.
     const radarSources = [...world.entities, ...Object.values(ships).filter((s) => s !== localShip)];
-    lastContacts = radar.buildContacts(localShip.group.position, radarSources, weapons.selectedTargetId);
+    // Fuse the task-force's sensor picture: Meridian's own radar plus every alive
+    // escort's — a contact within range of ANY of them shows up for every station,
+    // not just the ones near Meridian specifically (see RadarSystem.buildContacts).
+    const radarOrigins = [
+      localShip.group.position,
+      ...Object.values(ships)
+        .filter((s) => s !== localShip && s.alive !== false && !s.destroyed && s.group)
+        .map((s) => s.group.position),
+    ];
+    lastContacts = radar.buildContacts(radarOrigins, radarSources, weapons.selectedTargetId);
 
     // Patrol station / formation as a persistent nav mark on the plot + HUD.
     if (nav) {

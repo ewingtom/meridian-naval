@@ -29,6 +29,9 @@ export class Aircraft extends Entity {
     this._egressTimer = 0;
     this._fallVel = 0;
     this.benign = benign;
+    /** Stamped each frame by HostileFleetDirector — { targetShip, targetPos }. Lets an
+     * inbound bandit go after an escort instead of always Meridian, same as EnemyShip. */
+    this._fleet = null;
     scene.add(this.group);
     this._tryLoadBlenderHull();
   }
@@ -75,13 +78,6 @@ export class Aircraft extends Entity {
       return;
     }
 
-    const toPlayer = new THREE.Vector3().subVectors(playerPos, this.position);
-    const distFlat = Math.hypot(toPlayer.x, toPlayer.z);
-    const desiredHeading = Math.atan2(-toPlayer.x, -toPlayer.z);
-    let diff = desiredHeading - this.heading;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-
     if (this.benign) {
       // Civilian/commercial transit profile — holds its own course rather than
       // homing on the player, never enters ATTACK_RUN, never fires. It can still
@@ -90,12 +86,28 @@ export class Aircraft extends Entity {
       // "closing" while its corridor happens to pass near the task force, then
       // opens back up and clears — exactly the shape that made the real case
       // this scenario is grounded in look like an attack profile when it wasn't.
-      if (distFlat < 1400) this._passedClose = true;
+      // Deliberately measured against the player specifically (not task-force-wide
+      // targeting below) — this profile is a fixed TAO training scenario, not a
+      // hostile with a target to pick.
+      const toPlayer = new THREE.Vector3().subVectors(playerPos, this.position);
+      const distFlatPlayer = Math.hypot(toPlayer.x, toPlayer.z);
+      if (distFlatPlayer < 1400) this._passedClose = true;
       this.position.addScaledVector(this.forward, this.speedMs * dt);
       this._applyTransform();
-      if (this._passedClose && distFlat > 3200) this.destroyed = true; // clear of the area, transit complete
+      if (this._passedClose && distFlatPlayer > 3200) this.destroyed = true; // clear of the area, transit complete
       return;
     }
+
+    // Task-force-wide targeting: HostileFleetDirector may assign an escort instead of
+    // Meridian (same doctrine EnemyShip.js already uses for surface threats), so a
+    // bandit sometimes runs its attack on an escort rather than always the player.
+    const focusPos = this._fleet?.targetPos || this._fleet?.targetShip?.group?.position || playerPos;
+    const toFocus = new THREE.Vector3().subVectors(focusPos, this.position);
+    const distFlat = Math.hypot(toFocus.x, toFocus.z);
+    const desiredHeading = Math.atan2(-toFocus.x, -toFocus.z);
+    let diff = desiredHeading - this.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
 
     if (this.state === State.INBOUND) {
       this.heading += THREE.MathUtils.clamp(diff, -1, 1) * dt * 1.2;
@@ -105,7 +117,7 @@ export class Aircraft extends Entity {
       this.altitude = THREE.MathUtils.lerp(this.altitude, 70, dt * 0.4);
       this._fireCooldown -= dt;
       if (distFlat < 500 && this._fireCooldown <= 0) {
-        fireWeapon('airMissile', this.position.clone().setY(this.altitude), playerPos.clone(), this);
+        fireWeapon('airMissile', this.position.clone().setY(this.altitude), focusPos.clone(), this);
         this._fireCooldown = 999; // one pass, then egress
         this._egressTimer = 2.5;
       }

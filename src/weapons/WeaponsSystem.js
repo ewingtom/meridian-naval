@@ -22,6 +22,25 @@ function segmentPointDistance(a, b, p) {
   return _v3.copy(a).addScaledVector(_v, t).distanceTo(p);
 }
 
+// --- Saturation-based point-defense intercept probability ------------------------
+// A single Phalanx-class mount (ciwsRangeM=900, CIWS_KILL_RADIUS=9 above) is a very
+// reliable last-ditch shot against ONE inbound missile — real-world Pk figures for a
+// lone subsonic-ish ASM run high. But CiwsMountManager (CiwsMount.js) only ever trains
+// each mount on the single nearest threat at a time, so a raid that puts several
+// missiles into the envelope simultaneously divides the mount's attention: some
+// threats simply don't get engaged in time. Model that as Pk falling off with
+// saturation, not as a flat per-shot coin-flip — a lone shot should almost always
+// work, a heavy raid should sometimes leak one through, and that should read as an
+// emergent consequence of raid size rather than random noise on every single round.
+const CIWS_LONE_PK = 0.93; // one threat in the envelope: near-certain kill
+const CIWS_SATURATED_PK = 0.38; // Pk floor once the envelope is saturated
+const CIWS_SATURATION_COUNT = 5; // simultaneous threats at which Pk bottoms out
+
+function ciwsInterceptPk(saturationCount) {
+  const t = THREE.MathUtils.clamp((saturationCount - 1) / (CIWS_SATURATION_COUNT - 1), 0, 1);
+  return THREE.MathUtils.lerp(CIWS_LONE_PK, CIWS_SATURATED_PK, t);
+}
+
 const PLAYER_WEAPONS = {
   gun: { label: '130mm Deck Gun', ammoKey: null, cooldown: 0.7, projType: 'playerShell' },
   missile: { label: 'Anti-Ship Missile', ammoKey: 'missile', maxAmmo: 12, cooldown: 1.6, projType: 'playerMissile' },
@@ -234,6 +253,23 @@ export class WeaponsSystem {
           p.position.distanceTo(shipPos) < this.ciwsRangeM
       );
       if (threat && threat.type !== 'torpedo') {
+        // Resolve this threat-vs-defender engagement's intercept odds exactly once —
+        // the first time THIS ship takes it under fire — instead of rolling again on
+        // every 0.12s cooldown tick. Re-rolling every tick would make a sub-100% Pk
+        // meaningless (a handful of rolls per second all but guarantees an eventual
+        // "hit") and would flicker the outcome frame to frame. Cached on the threat
+        // itself, keyed by which ship resolved it, so subsequent rounds this ship
+        // fires at the same threat honor the original roll.
+        if (threat._pdRoll?.shipId !== ship.id) {
+          let saturation = 0;
+          for (const t of this.projectiles) {
+            if (!t.dead && (t.type === 'enemyMissile' || t.type === 'airMissile') &&
+              t.position.distanceTo(shipPos) < this.ciwsRangeM) saturation++;
+          }
+          const pk = ciwsInterceptPk(saturation);
+          threat._pdRoll = { shipId: ship.id, pk, willIntercept: Math.random() < pk };
+        }
+
         ship._ciwsCooldown = 0.12;
         ship.ciwsAmmo -= 1;
 
@@ -315,12 +351,20 @@ export class WeaponsSystem {
       if (p.type === 'ciwsRound' && p.targetEntity && !p.targetEntity.dead) {
         const threatPos = p.targetEntity.position;
         if (segmentPointDistance(p.prevPosition, p.position, threatPos) < CIWS_KILL_RADIUS) {
-          const killPos = threatPos.clone();
-          p.targetEntity.dead = true;
-          // Frag airburst — white flash + shrapnel star; distinct from a hull hit.
-          this.explode(killPos, { scale: 1.35, airburst: true });
-          this.fx.airburst(killPos, { scale: 2.1 });
+          // Whether this threat dies was already decided when its defender first
+          // engaged it (see the CIWS auto-defense loop above) — geometry alone no
+          // longer guarantees a kill. The round is expended either way (real ammo,
+          // real tracer burst); under saturation it can simply miss and the threat
+          // leaks through to the deterministic ship-hit check below.
+          const willIntercept = p.targetEntity._pdRoll?.willIntercept !== false;
           p.dead = true;
+          if (willIntercept) {
+            const killPos = threatPos.clone();
+            p.targetEntity.dead = true;
+            // Frag airburst — white flash + shrapnel star; distinct from a hull hit.
+            this.explode(killPos, { scale: 1.35, airburst: true });
+            this.fx.airburst(killPos, { scale: 2.1 });
+          }
         }
         continue;
       }

@@ -23,6 +23,9 @@ export class Submarine extends Entity {
     this._sinkT = 0;
     /** revealed briefly when at periscope depth, or always if player pings sonar nearby */
     this.sonarRevealed = false;
+    /** Stamped each frame by HostileFleetDirector — { targetShip, targetPos }. Lets a
+     * stalking sub put its fish into an escort instead of always Meridian. */
+    this._fleet = null;
     scene.add(this.group);
     this._tryLoadBlenderHull();
   }
@@ -85,7 +88,11 @@ export class Submarine extends Entity {
       return;
     }
 
-    const distToPlayer = this.position.distanceTo(playerPos);
+    // Task-force-wide targeting: HostileFleetDirector may assign an escort instead of
+    // Meridian (same doctrine EnemyShip.js/Aircraft.js already use), so a submarine
+    // sometimes stalks and torpedoes an escort rather than always the player.
+    const focusPos = this._fleet?.targetPos || this._fleet?.targetShip?.group?.position || playerPos;
+    const distToFocus = this.position.distanceTo(focusPos);
 
     // sonar reveal: active ping sweeping past reveals for a few seconds
     if (sonarPingActive && sonarPingOrigin) {
@@ -96,23 +103,23 @@ export class Submarine extends Entity {
 
     if (this.state === State.PATROL) {
       this.depth = THREE.MathUtils.lerp(this.depth, SUBMERGED_DEPTH, dt * 0.3);
-      if (distToPlayer < 2600) this.state = State.STALK;
+      if (distToFocus < 2600) this.state = State.STALK;
       this._wander(dt);
     } else if (this.state === State.STALK) {
       this.depth = THREE.MathUtils.lerp(this.depth, SUBMERGED_DEPTH, dt * 0.3);
-      this._steerToward(playerPos, dt);
+      this._steerToward(focusPos, dt);
       this._torpedoCooldown -= dt;
-      if (distToPlayer < this.torpedoRangeM && this._torpedoCooldown <= 0) {
+      if (distToFocus < this.torpedoRangeM && this._torpedoCooldown <= 0) {
         this.state = State.SURFACE_ATTACK;
         this._attackTimer = 3.5;
       }
-      if (distToPlayer > 3200) this.state = State.PATROL;
+      if (distToFocus > 3200) this.state = State.PATROL;
     } else if (this.state === State.SURFACE_ATTACK) {
       this._attackTimer -= dt;
       this.depth = THREE.MathUtils.lerp(this.depth, PERISCOPE_DEPTH, dt * 0.8);
-      this._steerToward(playerPos, dt, 0.3);
+      this._steerToward(focusPos, dt, 0.3);
       if (this._attackTimer <= 0) {
-        fireWeapon('torpedo', this.position.clone(), playerPos.clone(), this);
+        fireWeapon('torpedo', this.position.clone(), focusPos.clone(), this);
         this._torpedoCooldown = 22 + Math.random() * 10;
         this.state = State.STALK;
       }
