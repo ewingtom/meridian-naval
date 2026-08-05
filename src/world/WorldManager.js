@@ -4,6 +4,7 @@ import { Submarine } from '../entities/Submarine.js';
 import { Aircraft } from '../entities/Aircraft.js';
 import { MerchantShip } from '../entities/MerchantShip.js';
 import { buildEnemyShipMesh } from '../entities/geometryKits.js';
+import { IFF } from '../entities/Entity.js';
 
 export class WorldManager {
   constructor(scene, weapons) {
@@ -65,6 +66,45 @@ export class WorldManager {
       this.spawnWave('sub_roamer', aroundPos);
       // Decoy surface contact so ASW isn't the only plot noise.
       if (Math.random() < 0.45) this.spawnWave('patrol_pair', aroundPos.clone().add(new THREE.Vector3(600, 0, 200)));
+    } else if (name === 'ambiguous_inbound') {
+      // The one scenario in this game explicitly grounded in a documented real
+      // failure mode (see the research brief this was built from: a 1988
+      // shootdown of a civilian airliner that was misclassified as an attacking
+      // military aircraft under time pressure, with a friendly-coded IFF and a
+      // normal flight profile the classification never checked). This is NOT a
+      // reenactment — it's an original contact built in the same shape: reads
+      // superficially threatening (closing bearing, unresolved IFF) but its
+      // actual behavior and ground-truth IFF do not support a hostile call, and
+      // it appears alongside a genuinely hostile contact so identifying it
+      // correctly costs split attention, not a free pause. See TaoDebrief.js for
+      // how the outcome gets scored, and Aircraft's `benign` flag for why this
+      // contact can never itself behave like a threat regardless of how it reads.
+      const ambigPos = aroundPos.clone().add(new THREE.Vector3(-2600 + Math.random() * 400, 0, -1800 - Math.random() * 400));
+      // Aim near, not at, own-ship — a transit corridor that happens to pass
+      // close to the task force, not a beeline attack run.
+      const aimPoint = aroundPos.clone().add(new THREE.Vector3(700 + Math.random() * 500, 0, 0));
+      const toAim = aimPoint.clone().sub(ambigPos);
+      const ambig = new Aircraft({
+        name: 'Track 4192 (UNVERIFIED)',
+        position: ambigPos,
+        scene: this.scene,
+        iff: IFF.NEUTRAL,
+        benign: true,
+      });
+      ambig.heading = Math.atan2(-toAim.x, -toAim.z);
+      ambig.scenarioTag = 'ambiguous_inbound';
+      this.entities.push(ambig);
+
+      // Concurrent, genuinely hostile threat on a different bearing — the point
+      // of the scenario is split attention under real time pressure, not a quiz
+      // question with the rest of the fight paused.
+      const bandit = new Aircraft({
+        name: 'Bandit Zulu',
+        position: aroundPos.clone().add(new THREE.Vector3(2200 + Math.random() * 400, 0, -1200 - Math.random() * 400)),
+        scene: this.scene,
+      });
+      bandit.scenarioTag = 'ambiguous_inbound_pressure';
+      this.entities.push(bandit);
     }
   }
 

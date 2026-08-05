@@ -78,10 +78,17 @@ const TAO_AFFIL = {
   hostile: { key: 'hostile', short: 'HOST', long: 'HOSTILE', color: '#ff4d4d', dim: 'rgba(255,77,77,0.66)',   fill: 'rgba(255,77,77,0.12)' },
   neutral: { key: 'neutral', short: 'NEUT', long: 'NEUTRAL', color: '#3dff8f', dim: 'rgba(61,255,143,0.6)',   fill: 'rgba(61,255,143,0.10)' },
   unknown: { key: 'unknown', short: 'UNK',  long: 'UNKNOWN', color: '#ffdf3d', dim: 'rgba(255,223,61,0.62)',  fill: 'rgba(255,223,61,0.10)' },
+  // Distinct from plain `unknown`: this is the AEGIS console's "player hasn't
+  // positively identified this track yet" state (see IdentificationTracker.js).
+  // It renders the pulsing amber `.aegis-affil.suspect` treatment already
+  // defined in stations.css and is used whether the ground truth turns out to
+  // be hostile or not — anything else would leak the answer through the color.
+  suspect: { key: 'suspect', short: 'UNK',  long: 'UNRESOLVED', color: '#ffb02e', dim: 'rgba(255,176,46,0.6)', fill: 'rgba(255,176,46,0.12)' },
 };
 
 function taoAffiliation(iff) {
   const v = String(iff || 'unknown').toLowerCase();
+  if (v === 'unresolved' || v === 'suspect') return TAO_AFFIL.suspect;
   if (v.startsWith('friend') || v === 'own') return TAO_AFFIL.friend;
   if (v.startsWith('host') || v === 'enemy') return TAO_AFFIL.hostile;
   if (v.startsWith('neut')) return TAO_AFFIL.neutral;
@@ -312,40 +319,11 @@ export class StationOverlay {
         </div>
       </div>
 
-      <div class="stn-panel" data-panel="RADAR" hidden>
-        <div class="stn-radar-side">
-          <div class="stn-radar-tools hud-panel">
-            <div class="hud-corners"></div>
-            <div class="hud-label">Scope Controls</div>
-            <div class="stn-filter-row" data-rdr="filters">
-              <button type="button" data-filter="ALL" class="is-active">ALL</button>
-              <button type="button" data-filter="SURFACE">SURF</button>
-              <button type="button" data-filter="AIR">AIR</button>
-              <button type="button" data-filter="SUBSURFACE">SUB</button>
-              <button type="button" data-filter="LAND">LAND</button>
-              <button type="button" data-filter="NAV">NAV</button>
-            </div>
-            <div class="stn-range-row">
-              <button type="button" data-range="-">− RNG</button>
-              <span data-rdr="range">6.0 KM</span>
-              <button type="button" data-range="+">+ RNG</button>
-            </div>
-            <div class="stn-hint"><kbd>[</kbd>/<kbd>]</kbd> Range · <kbd>1</kbd>–<kbd>5</kbd> Filter · <kbd>Enter</kbd> Designate</div>
-          </div>
-          <div class="stn-contact-list hud-panel">
-            <div class="hud-corners"></div>
-            <div class="hud-label">Contact Track</div>
-            <div class="stn-contact-list-body" data-rdr="list"></div>
-          </div>
-          <div class="stn-sonar-panel hud-panel">
-            <div class="hud-corners"></div>
-            <div class="hud-label">Active Sonar</div>
-            <div class="stn-hint" style="margin-top:6px"><kbd>Q</kbd> Ping · localize submerged contacts</div>
-            <div class="stn-sonar-pulse" data-rdr="sonar"><i></i></div>
-            <div class="stn-nav-cue" data-rdr="nav-cue">VIGIL — not in picture</div>
-          </div>
-        </div>
-      </div>
+      <!-- RADAR now hosts the GCCS-M/COP display (see below) — the old sweep-scope
+           panel that used to live here was superseded by that move, and its "Active
+           Sonar"/Q-ping controls were a stale duplicate left over from before SONAR
+           was split into its own station (see the SONAR panel just below, which owns
+           that functionality now). -->
 
       <div class="stn-panel" data-panel="SONAR" hidden>
         <div class="stn-radar-side">
@@ -364,7 +342,15 @@ export class StationOverlay {
         </div>
       </div>
 
-      <div class="stn-panel" data-panel="TAO" hidden>
+      <!-- Moved here from TAO (2026-08) — the research pass found GCCS-M is a real
+           system, but it's the fleet/theater-level Common Operational Picture layer,
+           not a TAO's actual engagement console (that's AEGIS Display System / SSDS).
+           A COP display is a legitimate thing for whoever's maintaining the fused
+           surface/air contact picture to reference, though — Radar is the sensible
+           seat for it. Every bit of the implementation below is unchanged, just
+           retargeted from data-panel="TAO" to "RADAR". TAO gets a new, purpose-built
+           AEGIS-style console (further down). -->
+      <div class="stn-panel" data-panel="RADAR" hidden>
         <div class="stn-gccsm">
           <div class="gccsm-window">
             <div class="gccsm-classbar">SECRET // REL TO CTF-71 — HANDLE VIA GENSER CHANNELS ONLY</div>
@@ -434,6 +420,63 @@ export class StationOverlay {
         </div>
       </div>
 
+      <!-- TAO's own console, new build (2026-08). Framed as the ship's actual combat
+           system (AEGIS Display System on an Aegis destroyer) rather than the
+           GCCS-M/COP chrome moved to Radar above — see the research brief this was
+           built from: GCCS-M is the theater/fleet common-operational-picture layer,
+           the TAO's real second-by-second engagement picture comes from the combat
+           system (AEGIS/SSDS) fusing organic sensors with weapons control. Doctrine
+           status (weapons free/tight/hold) is the TAO's actual delegated-authority
+           lever per the SWOS training-officer reference this was grounded in. -->
+      <div class="stn-panel" data-panel="TAO" hidden>
+        <div class="stn-aegis">
+          <div class="aegis-window">
+            <div class="aegis-titlebar">
+              <span class="aegis-winicon"></span>
+              <span class="aegis-wintitle">AEGIS DISPLAY SYSTEM — COMBAT CONTROL</span>
+              <span class="aegis-winmeta" data-aeg="unit">USS MERIDIAN (DDG&#8209;119) · CIC</span>
+            </div>
+            <div class="aegis-doctrinebar">
+              <span class="aegis-doctrine-label">WEAPONS CONTROL STATUS</span>
+              <span class="aegis-doctrine-value" data-aeg="doctrine">HOLD</span>
+              <span class="aegis-doctrine-sep"></span>
+              <span class="aegis-doctrine-label">DESIGNATED TRACK</span>
+              <span class="aegis-doctrine-value" data-aeg="designated">NONE</span>
+            </div>
+            <div class="aegis-chartwrap">
+              <canvas class="aegis-canvas"></canvas>
+            </div>
+            <div class="aegis-statusbar">
+              <span data-aeg="cursor">BRG --- / RNG ---</span>
+              <span data-aeg="count">TRK 000</span>
+              <span data-aeg="zulu">--:--:--Z</span>
+            </div>
+          </div>
+          <div class="stn-radar-side">
+            <div class="aegis-pane">
+              <div class="aegis-panehead">Engagement Doctrine</div>
+              <div class="aegis-panebody">
+                <div class="stn-tao-status" data-aeg="status">WEAPONS HOLD · NO DESIGNATED TRACK</div>
+                <div class="stn-hint" style="margin-top:6px">
+                  <kbd>C</kbd> Designate · <kbd>I</kbd> Interrogate IFF · <kbd>V</kbd> Free · <kbd>J</kbd> Tight · <kbd>B</kbd> Hold · <kbd>N</kbd> Ping · <kbd>M</kbd> Screen
+                </div>
+              </div>
+            </div>
+            <div class="aegis-pane aegis-tracktable">
+              <div class="aegis-panehead">Threat Evaluation <span data-aeg="tcount">000 TRK</span></div>
+              <div class="aegis-table-head">
+                <span>TN</span><span>ID</span><span>CAT</span><span>THR</span><span>RNG</span><span>DOCTRINE</span>
+              </div>
+              <div class="stn-contact-list-body" data-aeg="list"></div>
+            </div>
+            <div class="aegis-pane aegis-detail">
+              <div class="aegis-panehead">Hooked Track — Fire Control</div>
+              <div class="aegis-detail-body" data-aeg="detail"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="stn-panel" data-panel="LOOKOUT" hidden>
         <div class="stn-lookout-frame"></div>
         <div class="stn-lookout-cross"></div>
@@ -487,13 +530,6 @@ export class StationOverlay {
       reticle: this.root.querySelector('.stn-weapons-reticle'),
       zoom: this.root.querySelector('[data-wpn="zoom"]'),
     };
-    this._rdr = {
-      list: this.root.querySelector('[data-rdr="list"]'),
-      sonar: this.root.querySelector('[data-rdr="sonar"]'),
-      filters: this.root.querySelector('[data-rdr="filters"]'),
-      range: this.root.querySelector('[data-rdr="range"]'),
-      navCue: this.root.querySelector('[data-rdr="nav-cue"]'),
-    };
     this._look = {
       readout: this.root.querySelector('[data-look="readout"]'),
       contact: this.root.querySelector('[data-look="contact"]'),
@@ -518,6 +554,33 @@ export class StationOverlay {
       mode: this.root.querySelector('[data-tao="mode"]'),
       toolbar: this.root.querySelector('[data-tao="toolbar"]'),
     };
+    // TAO's own new console (AEGIS-style combat control — see the `.stn-aegis`
+    // markup/CSS). Deliberately its own state, not layered onto `_tao`/`_taoXxx`
+    // above: that state now belongs to Radar's moved GCCS-M panel and mixing the two
+    // would let selecting a track on one console silently steal the hook on the other.
+    this._aeg = {
+      status: this.root.querySelector('[data-aeg="status"]'),
+      list: this.root.querySelector('[data-aeg="list"]'),
+      canvas: this.root.querySelector('.aegis-canvas'),
+      cursor: this.root.querySelector('[data-aeg="cursor"]'),
+      count: this.root.querySelector('[data-aeg="count"]'),
+      tcount: this.root.querySelector('[data-aeg="tcount"]'),
+      zulu: this.root.querySelector('[data-aeg="zulu"]'),
+      detail: this.root.querySelector('[data-aeg="detail"]'),
+      doctrine: this.root.querySelector('[data-aeg="doctrine"]'),
+      designated: this.root.querySelector('[data-aeg="designated"]'),
+    };
+    this._aegCtx = this._aeg.canvas.getContext('2d');
+    this._aegDpr = Math.min(window.devicePixelRatio || 1, 2);
+    this._aegSelectedId = null;
+    this._aegLastContacts = [];
+    this._aegRangeM = 9000;
+    this._resizeAegisCanvas();
+    if (typeof ResizeObserver !== 'undefined') {
+      this._aegRO = new ResizeObserver(() => this._resizeAegisCanvas());
+      this._aegRO.observe(this._aeg.canvas.parentElement);
+    }
+
     this._taoCtx = this._tao.canvas.getContext('2d');
     this._taoDpr = Math.min(window.devicePixelRatio || 1, 2);
     this._taoSelectedId = null;
@@ -537,7 +600,7 @@ export class StationOverlay {
     this._taoRedrawQueued = false;
     this._taoLastHeading = 0;
     this._resizeTaoCanvas();
-    window.addEventListener('resize', () => this._resizeTaoCanvas());
+    window.addEventListener('resize', () => { this._resizeTaoCanvas(); this._resizeAegisCanvas(); });
     if (typeof ResizeObserver !== 'undefined') {
       // The chart only gets a real size once the TAO panel un-hides; a window-resize
       // listener alone leaves the canvas stuck at its 420x300 fallback on first show.
@@ -577,19 +640,8 @@ export class StationOverlay {
       this.onTelegraph(Number(btn.dataset.order));
     });
 
-    this._rdr.filters.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-filter]');
-      if (!btn || !this.onFilterChange) return;
-      this.onFilterChange(btn.dataset.filter);
-    });
-    this.root.querySelector('.stn-range-row')?.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-range]');
-      if (!btn || !this.onRangeChange) return;
-      this.onRangeChange(btn.dataset.range === '+' ? 1 : -1);
-    });
-
     // Allow clicking station controls
-    this.root.querySelectorAll('.stn-telegraph-notches, .stn-radar-tools, .stn-filter-row, .stn-range-row')
+    this.root.querySelectorAll('.stn-telegraph-notches')
       .forEach((node) => { node.style.pointerEvents = 'auto'; });
 
     this._mounted = true;
@@ -634,13 +686,13 @@ export class StationOverlay {
     this._lastListUpdate = now;
 
     if (this._station === 'WEAPONS') this._updateWeapons(state);
-    else if (this._station === 'RADAR') this._updateRadar(state);
+    else if (this._station === 'RADAR') this._updateTao(state);
     else if (this._station === 'SONAR') this._updateSonar(state);
-    else if (this._station === 'TAO') this._updateTao(state);
+    else if (this._station === 'TAO') this._updateTaoAegis(state);
   }
 
   triggerSonarPulse() {
-    for (const el of [this._rdr.sonar, this._snr.sonar]) {
+    for (const el of [this._snr.sonar]) {
       if (!el) continue;
       el.classList.remove('is-active');
       void el.offsetWidth;
@@ -782,41 +834,6 @@ export class StationOverlay {
     }
   }
 
-  _updateRadar(s) {
-    const contacts = s.contacts || [];
-    const selectedId = s.selectedTargetId;
-    const filter = s.filter || 'ALL';
-    for (const btn of this._rdr.filters.querySelectorAll('[data-filter]')) {
-      btn.classList.toggle('is-active', btn.dataset.filter === filter);
-    }
-    if (this._rdr.range) {
-      const km = (s.rangeM || 6000) / 1000;
-      this._rdr.range.textContent = `${km.toFixed(1)} KM`;
-    }
-
-    const rows = contacts.slice(0, 14).map((c) => {
-      const iff = (c.iff || 'unknown').toLowerCase();
-      const dist = c.distanceM != null ? formatDistance(c.distanceM) : '';
-      const dom = (c.domain || '').toString().slice(0, 4).toUpperCase();
-      const nav = c.isWaypoint ? 'is-nav' : '';
-      return `<div class="stn-contact-row ${c.id === selectedId ? 'is-selected' : ''} ${nav}" data-contact-id="${c.id}" role="button" tabindex="0">
-        <span class="stn-contact-dot ${iff}"></span>
-        <span>${c.name || c.id} <em>${dom}</em></span>
-        <span>${dist}</span>
-      </div>`;
-    });
-    this._rdr.list.innerHTML = rows.length
-      ? rows.join('')
-      : `<div class="stn-contact-row"><span></span><span>NO CONTACTS IN FILTER</span><span></span></div>`;
-    this._wireContactList(this._rdr.list);
-
-    const nav = s.navWaypoint;
-    if (nav && this._rdr.navCue) {
-      this._rdr.navCue.textContent =
-        `VIGIL  BRG ${formatBearing(nav.bearing)}°  ·  ${formatDistance(nav.distanceM)}  ·  marked on plot`;
-    }
-  }
-
   _updateSonar(s) {
     const subs = (s.allContacts || []).filter((c) => String(c.domain).toUpperCase() === 'SUBSURFACE');
     const rows = subs.slice(0, 10).map((c) => `
@@ -834,6 +851,246 @@ export class StationOverlay {
         ? `Nearest sub ${formatDistance(subs[0].distanceM)} — ping to localize`
         : 'No subsurface contact';
     }
+  }
+
+  /** TAO's own console — an AEGIS-style combat-control display: engagement doctrine
+   * status, a threat table ranked by a simple range-based heuristic (a real TEWA
+   * weighting — closing rate, weapon envelope, domain — is future work; this is an
+   * honest first cut, not a claim of doctrinal precision), and a fire-control detail
+   * block for the hooked track. Own, separate hook/selection state from Radar's
+   * GCCS-M panel (_tao*) — selecting a track here must never steal Radar's hook. */
+  _updateTaoAegis(s) {
+    const st = s.taskForceStatus || {};
+    const policyLabel = st.weaponsPolicy === 'free' ? 'FREE' : st.weaponsPolicy === 'tight' ? 'TIGHT' : 'HOLD';
+    if (this._aeg.doctrine) this._aeg.doctrine.textContent = policyLabel;
+    if (this._aeg.designated) this._aeg.designated.textContent = st.sharedName || 'NONE';
+    if (this._aeg.status) {
+      const track = st.sharedName ? `DESIGNATED · ${st.sharedName}` : 'NO DESIGNATED TRACK';
+      this._aeg.status.textContent = `WEAPONS ${policyLabel} · ${track}`;
+    }
+
+    const contacts = (s.allContacts || []).filter((c) => !c.isWaypoint);
+    this._aegLastContacts = contacts;
+    if (s.selectedTargetId) this._aegSelectedId = s.selectedTargetId;
+    if (s.rangeM) this._aegRangeM = Math.max(s.rangeM * 1.5, 6000);
+    // Live IFF-interrogation readout (see IdentificationTracker.js /
+    // main.js beginIffInterrogation) — read by _renderAegisDetail below.
+    this._aegInterrogation = s.interrogation || null;
+
+    // Threat ranking: confirmed hostiles AND still-unresolved contacts ordered
+    // nearest-first (a real TEWA score would weight closing speed and weapon
+    // envelope too — see class comment). Ranking on the player's KNOWN
+    // affiliation, not ground truth, matters here: if only true hostiles ever
+    // got a rank number, an unresolved contact's blank rank would silently give
+    // away that it's actually safe — exactly the leak the "ambiguous inbound"
+    // scenario depends on not happening. Confirmed-clear (friend/neutral)
+    // contacts carry no rank; a blank column reads more honestly than a
+    // fabricated number.
+    const hostileOrder = contacts
+      .filter((c) => { const k = taoAffiliation(c.knownIff ?? c.iff).key; return k === 'hostile' || k === 'suspect'; })
+      .sort((a, b) => (a.distanceM ?? Infinity) - (b.distanceM ?? Infinity));
+    const threatRank = new Map(hostileOrder.map((c, i) => [c.id, i + 1]));
+
+    const rows = contacts.slice(0, 22).map((c) => {
+      const a = taoAffiliation(c.knownIff ?? c.iff);
+      const brg = c.x != null && c.z != null
+        ? formatBearing(((Math.atan2(c.x, c.z) * 180) / Math.PI + 360) % 360)
+        : '---';
+      const rank = threatRank.get(c.id);
+      const isDesignated = c.id === st.sharedTargetId;
+      let doctrine = '—';
+      if (a.key === 'hostile') {
+        if (isDesignated && st.weaponsPolicy !== 'hold') doctrine = 'ENGAGED';
+        else if (st.weaponsPolicy === 'hold') doctrine = 'HOLD';
+        else if (st.weaponsPolicy === 'tight') doctrine = isDesignated ? 'CLEARED' : 'TIGHT';
+        else doctrine = 'FREE';
+      } else if (a.key === 'suspect') {
+        doctrine = isDesignated ? 'ID REQUIRED' : 'UNRESOLVED';
+      }
+      return `<div class="stn-contact-row aegis-row ${String(c.id) === String(this._aegSelectedId) ? 'is-selected' : ''}" data-contact-id="${c.id}" role="button" tabindex="0" title="${escapeAttr(c.name || c.id)}">
+        <span class="aegis-tn">${taoTrackNumber(c.id)}</span>
+        <span class="aegis-affil ${a.key}">${a.short}</span>
+        <span>${taoCategory(c.domain)}</span>
+        <span>${rank ? String(rank).padStart(2, '0') : '--'}</span>
+        <span>${c.distanceM != null ? (c.distanceM / NM_M).toFixed(1) : '---'}</span>
+        <span>${doctrine}</span>
+      </div>`;
+    });
+    this._aeg.list.innerHTML = rows.length
+      ? rows.join('')
+      : `<div class="stn-contact-row aegis-row aegis-empty"><span>PICTURE CLEAR</span></div>`;
+    this._wireAegisList(this._aeg.list);
+
+    // Strict === would silently fail here: this._aegSelectedId can arrive as a
+    // string (set from a DOM dataset attribute by the click handler below) OR a
+    // number (set from s.selectedTargetId, which mirrors the entity's own numeric
+    // id) — a type mismatch meant the very next frame's update always found no
+    // match and immediately un-hooked whatever the click handler had just set.
+    const selected = contacts.find((c) => String(c.id) === String(this._aegSelectedId)) || null;
+    this._renderAegisDetail(selected, st);
+
+    const n = contacts.length;
+    if (this._aeg.count) this._aeg.count.textContent = `TRK ${String(n).padStart(3, '0')}`;
+    if (this._aeg.tcount) this._aeg.tcount.textContent = `${String(n).padStart(3, '0')} TRK`;
+    if (this._aeg.zulu) {
+      const d = new Date();
+      this._aeg.zulu.textContent =
+        `${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}Z`;
+    }
+    this._queueAegisRedraw();
+  }
+
+  _wireAegisList(listEl) {
+    listEl.querySelectorAll('[data-contact-id]').forEach((row) => {
+      const id = row.getAttribute('data-contact-id');
+      if (!id) return;
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        this._aegSelectedId = id;
+        this.onSelectContact?.(id);
+        const contact = this._aegLastContacts?.find((c) => String(c.id) === String(id));
+        this._renderAegisDetail(contact || null, {});
+        this._queueAegisRedraw();
+      });
+    });
+  }
+
+  _renderAegisDetail(c, st) {
+    if (!this._aeg.detail) return;
+    if (!c) {
+      this._aeg.detail.innerHTML = `<div class="aegis-detail-none">NO TRACK HOOKED<span>Select a row in Threat Evaluation, or click a symbol on the plot.</span></div>`;
+      return;
+    }
+    const a = taoAffiliation(c.knownIff ?? c.iff);
+    const brg = c.x != null && c.z != null
+      ? formatBearing(((Math.atan2(c.x, c.z) * 180) / Math.PI + 360) % 360)
+      : '---';
+    const interrogating = this._aegInterrogation && String(this._aegInterrogation.id) === String(c.id);
+    const idCell = interrogating
+      ? `<b class="suspect">INTERROGATING IFF… ${Math.round(this._aegInterrogation.progress * 100)}%</b>`
+      : `<b class="${a.key}">${a.long}</b>`;
+    const actionCell = interrogating
+      ? 'Standby for IFF response…'
+      : a.key === 'suspect'
+        ? 'Not positively identified — press I to interrogate IFF'
+        : '—';
+    this._aeg.detail.innerHTML = `
+      <span class="aegis-dk">TN</span><span class="aegis-dv">${taoTrackNumber(c.id)}</span>
+      <span class="aegis-dk">NAME</span><span class="aegis-dv">${escapeAttr(c.name || 'UNCORRELATED')}</span>
+      <span class="aegis-dk">ID</span><span class="aegis-dv">${idCell}</span>
+      <span class="aegis-dk">CAT</span><span class="aegis-dv">${taoCategoryLong(c.domain)}</span>
+      <span class="aegis-dk">BRG/RNG</span><span class="aegis-dv">${brg} / ${c.distanceM != null ? (c.distanceM / NM_M).toFixed(1) + ' NM' : '---'}</span>
+      <span class="aegis-dk">DESIG</span><span class="aegis-dv">${c.id === st?.sharedTargetId ? 'YES — this is the shared/designated track' : 'no'}</span>
+      <span class="aegis-dk">ACTION</span><span class="aegis-dv">${actionCell}</span>
+    `;
+  }
+
+  _resizeAegisCanvas() {
+    if (!this._aeg?.canvas) return;
+    const wrap = this._aeg.canvas.parentElement;
+    const w = Math.max(wrap.clientWidth || 0, 200);
+    const h = Math.max(wrap.clientHeight || 0, 160);
+    if (this._aeg.canvas.width === Math.round(w * this._aegDpr)
+      && this._aeg.canvas.height === Math.round(h * this._aegDpr)) return;
+    this._aeg.canvas.width = Math.round(w * this._aegDpr);
+    this._aeg.canvas.height = Math.round(h * this._aegDpr);
+    this._aeg.canvas.style.width = `${w}px`;
+    this._aeg.canvas.style.height = `${h}px`;
+    this._drawAegisChart();
+  }
+
+  /** Own-ship-centred polar threat plot — a heading-up sensor scope (unlike Radar's
+   * north-up GCCS-M chart), since this is reading the ship's own SPY array rather
+   * than a fused geographic COP. Deliberately simpler than the GCCS-M chart (no
+   * lat/long graticule, no track-history dead-reckoning) — this console's primary
+   * interaction surface is the Threat Evaluation table; the plot is a situational
+   * overview, matching how the table is where the actual doctrine decisions render. */
+  _drawAegisChart() {
+    const ctx = this._aegCtx;
+    const canvas = this._aeg.canvas;
+    if (!ctx || !canvas.width || !canvas.height) return;
+    const dpr = this._aegDpr;
+    const w = canvas.width / dpr, h = canvas.height / dpr;
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#010603';
+    ctx.fillRect(0, 0, w, h);
+
+    const cx = w / 2, cy = h / 2;
+    const R = Math.max(Math.min(w, h) / 2 - 22, 40);
+    const scale = R / this._aegRangeM;
+
+    // Range rings + bearing spokes
+    ctx.strokeStyle = 'rgba(96, 220, 140, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(140, 255, 180, 0.55)';
+    for (let i = 1; i <= 3; i++) {
+      const r = (R * i) / 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      const nm = (this._aegRangeM * i) / 3 / NM_M;
+      ctx.fillText(`${nm.toFixed(0)}NM`, cx + 3, cy - r + 10);
+    }
+    for (let a = 0; a < 360; a += 30) {
+      const rad = (a * Math.PI) / 180;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.sin(rad) * R, cy - Math.cos(rad) * R);
+      ctx.stroke();
+    }
+
+    // Own ship
+    ctx.strokeStyle = '#8fffb0';
+    ctx.fillStyle = '#8fffb0';
+    ctx.lineWidth = 1.5;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.beginPath();
+    ctx.moveTo(0, -9); ctx.lineTo(6, 8); ctx.lineTo(0, 4); ctx.lineTo(-6, 8);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+
+    // Contacts — simple MIL-STD-2525-flavored frames (circle friend / diamond hostile
+    // / square neutral / dashed diamond unknown), reusing the same affiliation colors
+    // as the track table so the plot and the table always agree.
+    for (const c of this._aegLastContacts) {
+      if (c.x == null || c.z == null) continue;
+      const sx = cx + c.x * scale, sy = cy - c.z * scale;
+      if (Math.hypot(sx - cx, sy - cy) > R + 6) continue;
+      const a = taoAffiliation(c.knownIff ?? c.iff);
+      const color = { friend: '#4de8ff', hostile: '#ff4d4d', neutral: '#3dff8f', unknown: '#ffdf3d', suspect: '#ffb02e' }[a.key] || '#ffdf3d';
+      const isSelected = String(c.id) === String(this._aegSelectedId);
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+      ctx.beginPath();
+      const sz = 6;
+      if (a.key === 'friend') {
+        ctx.arc(sx, sy, sz, 0, Math.PI * 2);
+      } else if (a.key === 'hostile') {
+        ctx.moveTo(sx, sy - sz); ctx.lineTo(sx + sz, sy); ctx.lineTo(sx, sy + sz); ctx.lineTo(sx - sz, sy); ctx.closePath();
+      } else if (a.key === 'neutral') {
+        ctx.rect(sx - sz, sy - sz, sz * 2, sz * 2);
+      } else {
+        ctx.setLineDash([2, 2]);
+        ctx.moveTo(sx, sy - sz); ctx.lineTo(sx + sz, sy); ctx.lineTo(sx, sy + sz); ctx.lineTo(sx - sz, sy); ctx.closePath();
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (isSelected) {
+        ctx.strokeStyle = '#ffb02e';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx - sz - 4, sy - sz - 4, sz * 2 + 8, sz * 2 + 8);
+      }
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.fillText(taoTrackNumber(c.id), sx + sz + 3, sy + 3);
+    }
+    ctx.restore();
   }
 
   /** TAO's console — a GCCS-M workstation replica (the real fused Common Operational
@@ -1105,7 +1362,17 @@ export class StationOverlay {
     this._taoRedrawQueued = true;
     requestAnimationFrame(() => {
       this._taoRedrawQueued = false;
-      if (this._station === 'TAO') this._drawGccsmChart();
+      if (this._station === 'RADAR') this._drawGccsmChart();
+    });
+  }
+
+  /** Same coalescing pattern as _queueTaoRedraw, for TAO's own Aegis canvas. */
+  _queueAegisRedraw() {
+    if (this._aegRedrawQueued) return;
+    this._aegRedrawQueued = true;
+    requestAnimationFrame(() => {
+      this._aegRedrawQueued = false;
+      if (this._station === 'TAO') this._drawAegisChart();
     });
   }
 
@@ -1518,7 +1785,7 @@ const STATION_UI = {
   },
   TAO: {
     title: 'TAO / CIC',
-    hint: '<kbd>C</kbd> Share · <kbd>V</kbd> Free · <kbd>B</kbd> Hold · <kbd>N</kbd> Ping · <kbd>M</kbd> Screen · <kbd>Y</kbd> Wilco · <kbd>E</kbd> Stand',
+    hint: '<kbd>C</kbd> Share · <kbd>I</kbd> Interrogate IFF · <kbd>V</kbd> Free · <kbd>J</kbd> Tight · <kbd>B</kbd> Hold · <kbd>N</kbd> Ping · <kbd>M</kbd> Screen · <kbd>E</kbd> Stand',
   },
 };
 

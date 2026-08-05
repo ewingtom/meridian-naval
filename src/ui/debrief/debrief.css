@@ -1,0 +1,86 @@
+/* debrief/debrief.css — after-action debrief screen. Extends menus.css's shared
+   .meridian-menu/.menu-content/.meridian-btn language (see PauseMenu) rather than
+   inventing a new modal chrome; only the debrief-specific bits (principle rows,
+   pass/fail/partial badges) live here. */
+
+.debrief-panel { z-index: 60; }
+.debrief-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 9, 0.6);
+  backdrop-filter: blur(10px) saturate(1.1);
+}
+.debrief-content {
+  max-width: 620px;
+  width: min(620px, 92vw);
+  margin: 0 auto;
+  align-items: stretch;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding-bottom: 4vh;
+}
+.debrief-summary {
+  margin-top: 10px;
+  font: 12px var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--c-amber);
+}
+
+.debrief-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+.debrief-row {
+  border: 1px solid var(--c-border);
+  border-left: 3px solid var(--c-border-strong);
+  background: var(--c-bg-panel);
+  padding: 10px 14px;
+}
+.debrief-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.debrief-badge {
+  flex: none;
+  font: 11px var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+}
+.debrief-name {
+  font: 13px var(--font-mono);
+  color: var(--c-text);
+  letter-spacing: 0.02em;
+}
+.debrief-rationale {
+  margin-top: 6px;
+  font: 12px var(--font-mono);
+  color: var(--c-text-dim);
+  line-height: 1.4;
+}
+
+.debrief-pass { border-left-color: var(--c-green); }
+.debrief-pass .debrief-badge { color: var(--c-green); background: var(--c-green-soft); }
+.debrief-fail { border-left-color: var(--c-red); }
+.debrief-fail .debrief-badge { color: var(--c-red); background: var(--c-red-soft); }
+.debrief-partial { border-left-color: var(--c-amber); }
+.debrief-partial .debrief-badge { color: var(--c-amber); background: var(--c-amber-soft); }
+
+.debrief-note {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border);
+  font: 11px var(--font-mono);
+  line-height: 1.5;
+  color: var(--c-text-faint);
+}
+
+.debrief-nav { margin-top: 18px; }
+
+@media (max-width: 640px) {
+  .debrief-content { padding-left: 5vw; padding-right: 5vw; }
+}

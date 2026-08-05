@@ -974,6 +974,248 @@
   font-size: 9.5px;
 }
 
+/* ==========================================================================
+   TAO — AEGIS Display System combat-control console
+   ==========================================================================
+   Deliberately distinct from the GCCS-M chrome above (now Radar's), both in
+   branding and in feel: this is the ship's own combat system, not a joint C2
+   terminal. AEGIS/SPY-era combat consoles are iconically monochrome green
+   phosphor vector displays — that read (rather than a literal reproduction of
+   a specific modern flat-panel ADS build, which isn't public reference
+   material) is what's used here: black screen, green vector linework, amber
+   reserved for the weapons-doctrine state since that's the one piece of
+   information on this screen that's a live decision, not a picture.
+   -------------------------------------------------------------------------- */
+.stn-aegis {
+  position: absolute;
+  inset: var(--stn-content-top, 110px) 22px 28px 22px;
+  display: flex;
+  gap: 10px;
+  pointer-events: auto;
+  --ag-chrome:   #0a1410;
+  --ag-chrome-2: #060d0a;
+  --ag-face:     #0f1f16;
+  --ag-line:     rgba(96, 220, 140, 0.28);
+  --ag-line-hi:  rgba(140, 255, 180, 0.55);
+  --ag-text:     #8fffb0;
+  --ag-text-dim: #4f9c6c;
+  --ag-friend:   #4de8ff;
+  --ag-hostile:  #ff4d4d;
+  --ag-neutral:  #3dff8f;
+  --ag-unknown:  #ffdf3d;
+  --ag-doctrine: #ffb02e;
+}
+.stn-aegis .aegis-tool,
+.stn-aegis .aegis-canvas,
+.stn-aegis .aegis-row,
+.stn-aegis .stn-contact-list-body {
+  pointer-events: auto;
+  cursor: default;
+}
+.stn-aegis .aegis-canvas { cursor: crosshair; }
+.stn-aegis .stn-radar-side {
+  position: static;
+  width: 326px;
+  flex: none;
+  top: auto; left: auto; bottom: auto;
+  gap: 8px;
+}
+
+.aegis-window {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ag-chrome-2);
+  border: 1px solid var(--ag-line);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 10px 40px rgba(0, 0, 0, 0.55), inset 0 0 60px rgba(60, 255, 140, 0.03);
+  font-family: var(--font-mono);
+}
+.aegis-titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, #14301f 0%, #0c1c13 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.55);
+}
+.aegis-winicon {
+  width: 11px; height: 11px; flex: none;
+  border: 1px solid var(--ag-line-hi);
+  background: linear-gradient(135deg, #4fdc8c, #123120);
+  box-shadow: 0 0 6px rgba(79, 220, 140, 0.6);
+}
+.aegis-wintitle {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ag-text);
+  font-weight: 700;
+  white-space: nowrap;
+  text-shadow: 0 0 8px rgba(79, 220, 140, 0.4);
+}
+.aegis-winmeta {
+  flex: 1;
+  min-width: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  color: var(--ag-text-dim);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aegis-doctrinebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--ag-chrome);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+  font-size: 10px;
+}
+.aegis-doctrine-label {
+  letter-spacing: 0.12em;
+  color: var(--ag-text-dim);
+}
+.aegis-doctrine-value {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ag-doctrine);
+  text-shadow: 0 0 8px rgba(255, 176, 46, 0.5);
+}
+.aegis-doctrine-sep {
+  width: 1px;
+  align-self: stretch;
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+.aegis-chartwrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #010603;
+  border-top: 1px solid rgba(0, 0, 0, 0.6);
+}
+.aegis-canvas { display: block; width: 100%; height: 100%; }
+
+.aegis-statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  background: var(--ag-chrome);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.aegis-statusbar span {
+  font: 9.5px var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--ag-text-dim);
+  padding: 4px 9px;
+  border-right: 1px solid rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+}
+.aegis-statusbar span:last-child { border-right: none; margin-left: auto; }
+
+.aegis-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--ag-chrome-2);
+  border: 1px solid var(--ag-line);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  font-family: var(--font-mono);
+}
+.aegis-pane.aegis-tracktable { flex: 1; }
+.aegis-panehead {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  background: linear-gradient(180deg, #14301f, #0c1c13);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ag-text);
+}
+.aegis-panehead span { font-weight: 400; letter-spacing: 0.06em; color: var(--ag-text-dim); }
+.aegis-panebody { padding: 8px 10px 10px; }
+.stn-aegis .stn-tao-status { margin-top: 0; color: var(--ag-doctrine); font-weight: 700; }
+.stn-aegis .stn-hint { color: var(--ag-text-dim); }
+.stn-aegis .stn-hint kbd { color: var(--ag-text); background: rgba(79, 220, 140, 0.1); border-color: var(--ag-line); }
+
+.aegis-tracktable .stn-contact-list-body { flex: 1; min-height: 0; margin-top: 0; gap: 0; overflow: hidden; }
+.aegis-table-head {
+  display: grid;
+  grid-template-columns: 0.85fr 0.75fr 0.65fr 0.55fr 0.6fr 0.9fr;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #08120c;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  font: 8.5px var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--ag-text-dim);
+}
+.aegis-row {
+  display: grid !important;
+  grid-template-columns: 0.85fr 0.75fr 0.65fr 0.55fr 0.6fr 0.9fr;
+  gap: 4px;
+  padding: 3px 8px !important;
+  font-size: 10px;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  color: var(--ag-text-dim);
+}
+.aegis-row:nth-child(even) { background: rgba(255, 255, 255, 0.018); }
+.aegis-row:hover { background: rgba(120, 255, 170, 0.08); color: var(--ag-text); }
+.aegis-row.is-selected { background: #123322 !important; border-left-color: var(--ag-doctrine); color: #eafff2; }
+.aegis-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aegis-tn { color: var(--ag-text); }
+.aegis-row.is-selected .aegis-tn { color: #fff; font-weight: 700; }
+.aegis-affil.friend  { color: var(--ag-friend); }
+.aegis-affil.hostile { color: var(--ag-hostile); }
+.aegis-affil.neutral { color: var(--ag-neutral); }
+.aegis-affil.unknown { color: var(--ag-unknown); }
+/* Classification workflow: a hostile track that hasn't been positively IDed yet
+   reads visibly "unresolved" — pulsing amber outline — since Weapons Tight (unlike
+   Weapons Free) will refuse to engage it until it is. This is the one status this
+   console must never let read as calm when it isn't. */
+.aegis-affil.suspect { color: var(--ag-doctrine); animation: aegis-suspect-pulse 1.4s ease-in-out infinite; }
+@keyframes aegis-suspect-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.aegis-empty { grid-template-columns: 1fr !important; color: var(--ag-text-dim); }
+
+.aegis-detail { flex: none; }
+.aegis-detail-body {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 2px 8px;
+  padding: 7px 10px 9px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.aegis-dk { color: var(--ag-text-dim); letter-spacing: 0.08em; }
+.aegis-dv { color: var(--ag-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aegis-dv b.friend  { color: var(--ag-friend); }
+.aegis-dv b.hostile { color: var(--ag-hostile); }
+.aegis-dv b.neutral { color: var(--ag-neutral); }
+.aegis-dv b.unknown { color: var(--ag-unknown); }
+/* Same unresolved-ID state as .aegis-affil.suspect above, applied to the hooked-
+   track detail block's ID line and its live "INTERROGATING IFF…" readout. */
+.aegis-dv b.suspect { color: var(--ag-doctrine); }
+.aegis-detail-none {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ag-text-dim);
+  padding: 4px 0;
+}
+.aegis-detail-none span { display: block; margin-top: 4px; letter-spacing: 0.02em; opacity: 0.65; font-size: 9.5px; }
+
 /* enlarge tactical radar when manning the radar station */
 .tac-radar.stn-radar-focus {
   right: 28px;

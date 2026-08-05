@@ -7,8 +7,18 @@ const State = { INBOUND: 'INBOUND', ATTACK_RUN: 'ATTACK_RUN', EGRESS: 'EGRESS', 
 const AIR_MODEL_URL = `${import.meta.env.BASE_URL || '/'}assets/models/enemy_aircraft.glb`;
 
 export class Aircraft extends Entity {
-  constructor({ name = 'Bandit', position, scene }) {
-    super({ name, domain: Domain.AIR, iff: IFF.HOSTILE, maxHealth: 35, position });
+  /**
+   * `benign` opts an aircraft entirely out of the attack-run/fire-weapon state
+   * machine below — it flies a steady transit profile and never turns hostile
+   * regardless of how it reads on a sensor (closing, descending, whatever).
+   * Used for the "ambiguous inbound" TAO training contact (see
+   * WorldManager.spawnWave('ambiguous_inbound')): its ground-truth `iff` is
+   * NEUTRAL and it must never actually behave like a threat, no matter how
+   * threatening it looks — the whole point is that the cues are misleading,
+   * not that the game is lying about what the aircraft actually does.
+   */
+  constructor({ name = 'Bandit', position, scene, iff = IFF.HOSTILE, benign = false }) {
+    super({ name, domain: Domain.AIR, iff, maxHealth: 35, position });
     const { group } = buildAircraftMesh();
     this.group = group;
     this.altitude = 180 + Math.random() * 60;
@@ -18,6 +28,7 @@ export class Aircraft extends Entity {
     this._fireCooldown = 0;
     this._egressTimer = 0;
     this._fallVel = 0;
+    this.benign = benign;
     scene.add(this.group);
     this._tryLoadBlenderHull();
   }
@@ -70,6 +81,21 @@ export class Aircraft extends Entity {
     let diff = desiredHeading - this.heading;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
+
+    if (this.benign) {
+      // Civilian/commercial transit profile — holds its own course rather than
+      // homing on the player, never enters ATTACK_RUN, never fires. It can still
+      // be shot down (no invulnerability — that would make the "wrong" outcome
+      // unreachable), but it will never itself act like a threat. Reads as
+      // "closing" while its corridor happens to pass near the task force, then
+      // opens back up and clears — exactly the shape that made the real case
+      // this scenario is grounded in look like an attack profile when it wasn't.
+      if (distFlat < 1400) this._passedClose = true;
+      this.position.addScaledVector(this.forward, this.speedMs * dt);
+      this._applyTransform();
+      if (this._passedClose && distFlat > 3200) this.destroyed = true; // clear of the area, transit complete
+      return;
+    }
 
     if (this.state === State.INBOUND) {
       this.heading += THREE.MathUtils.clamp(diff, -1, 1) * dt * 1.2;

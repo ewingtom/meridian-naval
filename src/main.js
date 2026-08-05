@@ -13,10 +13,12 @@ import { RadarSystem } from './systems/RadarSystem.js';
 import { MissionSystem } from './systems/MissionSystem.js';
 import { DynamicOps } from './systems/DynamicOps.js';
 import { TaskForceCoop } from './systems/TaskForceCoop.js';
+import { IdentificationTracker } from './systems/IdentificationTracker.js';
+import { ScenarioRun } from './systems/TaoDebrief.js';
 import { WorldManager } from './world/WorldManager.js';
 import { buildIsland } from './world/Island.js';
 import { AudioEngine } from './audio/AudioEngine.js';
-import { ShipHUD, TacticalRadar, MainMenu, PauseMenu, SettingsPanel, CommsLog, DamageVignette, StationOverlay, LobbyMenu, CoopPanel } from './ui/index.js';
+import { ShipHUD, TacticalRadar, MainMenu, PauseMenu, SettingsPanel, CommsLog, DamageVignette, StationOverlay, LobbyMenu, CoopPanel, DebriefPanel } from './ui/index.js';
 import { installFrameDumper } from './debug/frameDump.js';
 
 const canvas = document.getElementById('scene');
@@ -315,6 +317,12 @@ commsLog.mount(uiRoot);
 const damageVignette = new DamageVignette();
 damageVignette.mount(uiRoot);
 
+// Player-knowledge identification state — see IdentificationTracker.js. Separate
+// from every entity's ground-truth `iff`; only the TAO/AEGIS console and
+// TaskForceCoop's weapons-tight gate read this. Declared before `taskForce` since
+// its gate needs a live getter into this.
+const idTracker = new IdentificationTracker();
+
 const taskForce = new TaskForceCoop({
   ships,
   autopilots,
@@ -324,8 +332,12 @@ const taskForce = new TaskForceCoop({
   getSelectedTargetId: () => weapons.selectedTargetId,
   setSelectedTargetId: (id) => { weapons.selectedTargetId = id; },
   getLocalShip: () => localShip,
+  // WEAPONS TIGHT's doctrinal gate — see TaskForceCoop.isClearedToEngage(). Reads
+  // the player's current knowledge of a track, not its ground truth.
+  getKnownIff: (id) => idTracker.knownIffFor(id),
   onSharedTrack: (id) => {
     weapons.selectedTargetId = id;
+    scenarioRun?.noteShared(id);
     const ent = world.entities.find((e) => e.id === id) || findLandTargetById(id);
     if (!ent) return;
     const d = String(ent.domain || '').toUpperCase();
@@ -336,6 +348,13 @@ const taskForce = new TaskForceCoop({
     else weapons.selectWeapon('gun');
   },
 });
+
+// Active/most-recent run of the "ambiguous inbound" TAO training scenario (see
+// WorldManager.spawnWave('ambiguous_inbound') and TaoDebrief.js) — null until the
+// mission first spawns it. `lastDebriefScore` survives after the run finishes so
+// the debrief can be reopened (P) without needing to replay the scenario.
+let scenarioRun = null;
+let lastDebriefScore = null;
 
 const coopPanel = new CoopPanel({
   onAction: (action) => {
@@ -493,6 +512,77 @@ function resumeFromPause() {
   // yank that cursor away out from under the player mid-session.
   const def = STATION_DEFS[playerController.state];
   if (!def?.cursorMode) canvas.requestPointerLock();
+}
+
+// ---- TAO training scenario debrief — see TaoDebrief.js for scoring, DebriefPanel
+// for the screen itself. Pauses the sim the same way PauseMenu does (reuses the
+// `paused` flag) but is otherwise a completely separate, dismissable overlay —
+// this is a training aid, not a game-over: the player can always close it and
+// keep playing, and requesting it again (P) later just re-shows the last score. ----
+let debriefIsOpen = false;
+const debriefPanel = new DebriefPanel({ onClose: () => closeDebrief() });
+debriefPanel.mount(uiRoot);
+debriefPanel.hide();
+
+function openDebrief() {
+  if (!lastDebriefScore) {
+    commsLog.push({ speaker: 'CIC', text: 'No completed engagement to debrief yet.', urgency: 'normal' });
+    return;
+  }
+  debriefIsOpen = true;
+  paused = true;
+  if (document.pointerLockElement) document.exitPointerLock();
+  debriefPanel.show(lastDebriefScore);
+}
+
+function closeDebrief() {
+  debriefIsOpen = false;
+  debriefPanel.hide();
+  paused = false;
+  const def = STATION_DEFS[playerController.state];
+  if (!def?.cursorMode) canvas.requestPointerLock();
+}
+
+// ---- "Ambiguous inbound" TAO scenario bookkeeping — see WorldManager's
+// spawnWave('ambiguous_inbound') for what actually gets spawned and
+// src/systems/TaoDebrief.js for how the outcome gets scored. ----
+function beginAmbiguousScenario() {
+  const ambig = world.entities.find((e) => e.scenarioTag === 'ambiguous_inbound');
+  const bandit = world.entities.find((e) => e.scenarioTag === 'ambiguous_inbound_pressure');
+  scenarioRun = new ScenarioRun({ ambiguousId: ambig?.id ?? null, realThreatId: bandit?.id ?? null });
+}
+
+/** Polled once per active frame while a run is in flight — watches world state
+ *  for the facts TaoDebrief.js scores against, then closes the run out once
+ *  both contacts have resolved one way or another (or a generous timeout
+ *  trips, so a stuck run can never wall off the rest of the patrol). */
+function pollAmbiguousScenario() {
+  if (!scenarioRun || !scenarioRun.active) return;
+  const ambig = scenarioRun.ambiguousId != null
+    ? world.entities.find((e) => String(e.id) === scenarioRun.ambiguousId) : null;
+  const bandit = scenarioRun.realThreatId != null
+    ? world.entities.find((e) => String(e.id) === scenarioRun.realThreatId) : null;
+
+  if (bandit && !bandit.alive) scenarioRun.noteRealThreatHandled();
+  if (ambig && !ambig.alive) scenarioRun.noteEngagedUnresolved(ambig.id);
+  if (ambig && taskForce.weaponsPolicy === 'free' && !idTracker.isResolved(ambig.id)) {
+    scenarioRun.noteFreeWhileUnresolved();
+  }
+
+  const elapsed = performance.now() / 1000 - scenarioRun.startedAt;
+  const ambigDone = !ambig || ambig.destroyed;
+  const banditDone = !bandit || bandit.destroyed || !bandit.alive;
+  if ((ambigDone && (banditDone || elapsed > 50)) || elapsed > 150) {
+    finishAmbiguousScenario();
+  }
+}
+
+function finishAmbiguousScenario() {
+  scenarioRun.finish();
+  mission.flag('ambiguousResolved');
+  lastDebriefScore = { scenarioName: 'AMBIGUOUS INBOUND — DEBRIEF', principles: scenarioRun.score() };
+  commsLog.push({ speaker: 'TASK FORCE ACTUAL', text: 'Scenario complete — after-action debrief ready (P to reopen).', urgency: 'normal' });
+  openDebrief();
 }
 
 // ---- game over overlay (no dedicated component from the UI kit — same visual
@@ -673,6 +763,7 @@ function beginPatrol() {
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && gameStarted) {
+    if (debriefIsOpen) { closeDebrief(); return; }
     if (settingsIsOpen) { settings.hide(); settingsIsOpen = false; if (paused) pauseMenu.show(); return; }
     if (!paused) {
       paused = true;
@@ -682,6 +773,17 @@ window.addEventListener('keydown', (e) => {
       resumeFromPause();
     }
   }
+});
+
+// Manual "request debrief" — available any time (per the SWOS ITS precedent this
+// was grounded in: a replay/debrief the trainee can pull up, not only an
+// end-of-scenario popup). Won't fight the pause menu/settings for the `paused`
+// flag — only opens from a fully unpaused state, and P while it's already open
+// just closes it again.
+window.addEventListener('keydown', (e) => {
+  if (!gameStarted || e.code !== 'KeyP') return;
+  if (debriefIsOpen) closeDebrief();
+  else if (!paused && !settingsIsOpen) openDebrief();
 });
 
 // ============================ TEMP UI (not covered by the UI component library) ============================
@@ -905,6 +1007,9 @@ window.addEventListener('keydown', (e) => {
   if (!gameStarted || paused || gameOver) return;
   if (e.code === 'KeyC') { taskForce.shareTrack(); audio.playUiConfirm(); }
   else if (e.code === 'KeyV') { taskForce.engageShared(); audio.playUiConfirm(); }
+  // J, not T — T is already Weapons station's local track-lock toggle, and Y is
+  // already Task Force Net's affirm; J is the one clean unused letter left.
+  else if (e.code === 'KeyJ') { taskForce.weaponsTight(); audio.playUiConfirm(); }
   else if (e.code === 'KeyB') { taskForce.weaponsHold(); audio.playUiConfirm(); }
   else if (e.code === 'KeyN') {
     if (taskForce.requestEscortPing()) {
@@ -970,6 +1075,9 @@ window.addEventListener('keydown', (e) => {
 
   if (st === Station.TAO && (e.code === 'Enter' || e.code === 'NumpadEnter')) {
     designateSelectedTrack({ from: 'TAO' });
+  }
+  if (st === Station.TAO && e.code === 'KeyI') {
+    beginIffInterrogation();
   }
 
   if (st === Station.WEAPONS) {
@@ -1115,12 +1223,53 @@ function designateSelectedTrack({ from = 'CIC' } = {}) {
   return ok;
 }
 
+/** AEGIS console's IFF interrogation action — resolves the hooked track's
+ * "player knowledge" state (see IdentificationTracker.js). Deliberately not
+ * instant: beginInterrogate() runs a real timer, and the result lands via the
+ * idTracker.update() completion handled in the main animate() loop below,
+ * which is where the resulting comms line actually gets pushed. */
+function beginIffInterrogation() {
+  const id = weapons.selectedTargetId;
+  if (!id || String(id).startsWith('nav:') || String(id).startsWith('inbound:')) {
+    commsLog.push({ speaker: 'AEGIS', text: 'No track hooked — select a contact, then interrogate IFF.', urgency: 'normal' });
+    return;
+  }
+  // String() coercion: a track selected by clicking an AEGIS row arrives here as
+  // a string (DOM dataset), but real entities carry a numeric id in lastContacts
+  // — strict === would silently miss the match (see IdentificationTracker's
+  // constructor comment for the same issue elsewhere).
+  const contact = lastContacts.find((c) => String(c.id) === String(id));
+  if (!contact) return;
+  if (idTracker.isResolved(id)) {
+    commsLog.push({ speaker: 'AEGIS', text: `${contact.name || 'Track'} already positively identified — ${String(contact.iff).toUpperCase()}.`, urgency: 'normal' });
+    return;
+  }
+  const started = idTracker.beginInterrogate(id, contact.iff);
+  if (started) {
+    commsLog.push({ speaker: 'AEGIS', text: `Interrogating IFF on ${contact.name || 'hooked track'}…`, urgency: 'normal' });
+    audio.playUiConfirm();
+    scenarioRun?.noteInterrogate(id);
+  } else {
+    commsLog.push({ speaker: 'AEGIS', text: 'IFF interrogation already in progress — stand by.', urgency: 'normal' });
+  }
+}
+
 function evaluateFireSolution(targetEntity, targetInfo) {
   const key = weapons.selectedWeapon;
   if (!targetInfo && key !== 'gun' && key !== 'drone') {
     return { ok: false, reason: 'NO TRACK', detail: 'Scan to acquire, Tab to cycle, or R to lock' };
   }
   const domain = String(targetEntity?.domain || targetInfo?.domain || '').toUpperCase();
+  // WEAPONS TIGHT's doctrinal gate: the designated/selected track must actually be
+  // positively identified before it's cleared to engage — free-fire cues (closing,
+  // descending) are not identification. Scoped to guided weapons that target a real
+  // entity; the deck gun and recon drone are exempt (see evaluateFireSolution's
+  // existing gun/drone carve-outs above and TaskForceCoop.isClearedToEngage's doc
+  // comment for why FREE bypasses this and HOLD blocks everything regardless).
+  if (targetEntity && domain !== 'LAND' && key !== 'gun' && key !== 'drone'
+    && taskForce.weaponsPolicy === 'tight' && !taskForce.isClearedToEngage(targetEntity.id)) {
+    return { ok: false, reason: 'ID REQUIRED', detail: 'WEAPONS TIGHT — positively identify this track (TAO, key I) before engaging' };
+  }
   if (key === 'missile') {
     if (!targetEntity || domain !== 'SURFACE') {
       return { ok: false, reason: 'WRONG DOMAIN', detail: 'Anti-ship missiles need a surface track' };
@@ -1194,6 +1343,11 @@ function reportLookoutContact() {
     text: `Visual contact bearing ${brg} — ${e.name || 'unknown'}, ${(e.domain || '').toLowerCase()}, classified ${(e.iff || '').toLowerCase()}.`,
     urgency: e.iff === 'HOSTILE' ? 'warning' : 'normal',
   });
+  // Feed the SAME "player knowledge" state the AEGIS console reads (see
+  // IdentificationTracker.js) rather than building a second classification
+  // system — a visual ID from the bridge wing is exactly as valid a resolution
+  // as an AEGIS IFF interrogation.
+  idTracker.resolve(e.id, e.iff, 'visual');
   weapons.selectedTargetId = e.id;
   // Visual ID beats require share — Lookout reporting pushes the contact onto the
   // force plot so the player isn't stuck after R with an unfinished coop gate.
@@ -1310,6 +1464,14 @@ function fireSelectedWeapon() {
   }
   const sol = evaluateFireSolution(targetEntity || null, targetInfo);
   if (!sol.ok && weapons.selectedWeapon !== 'gun') {
+    if (sol.reason === 'ID REQUIRED' && performance.now() - lastIdWarnAt > 2500) {
+      lastIdWarnAt = performance.now();
+      commsLog.push({
+        speaker: 'WEAPONS',
+        text: `Weapons tight — ${targetEntity?.name || 'this track'} is not positively identified. Interrogate IFF before engaging.`,
+        urgency: 'warning',
+      });
+    }
     return;
   }
 
@@ -1359,6 +1521,13 @@ window.GAME = {
   pipeline, sky, ocean, camera, scene, renderer, THREE, ships, localShipId, cameraRig, playerController,
   weapons, radar, world, mission, audio, hud, tacRadar, mainMenu, pauseMenu, settings, commsLog,
   damageVignette, island, islet, stationOverlay, Station, mp, lobby, dynamicOps, taskForce, coopPanel,
+  // TAO identification/scenario/debrief debug surface — getters since scenarioRun
+  // and lastDebriefScore are reassigned over the run rather than mutated in place.
+  idTracker, debriefPanel,
+  getScenarioRun: () => scenarioRun,
+  getLastDebriefScore: () => lastDebriefScore,
+  beginIffInterrogation, openDebrief, closeDebrief,
+  beginAmbiguousScenario, finishAmbiguousScenario,
 };
 const frameDumper = installFrameDumper(renderer);
 window.GAME.dumpFrames = frameDumper.dumpFrames;
@@ -1374,6 +1543,7 @@ let throttleCmd = 0;
 let rudderCmd = 0;
 let lastContacts = [];
 let hostileWaveSpawned = false;
+let lastIdWarnAt = 0; // debounces the "not positively identified" fire-attempt warning
 window.GAME.setHelmCommand = (throttle, rudder = 0) => {
   // Accept either (throttle, rudder) or ({ throttle, rudder }) for debug/judge scripts.
   if (throttle && typeof throttle === 'object') {
@@ -1448,8 +1618,16 @@ function animate() {
         }
         // Unified brain tick when AI holds helm and/or weapons.
         if (!helmHuman || !weaponsHuman) {
-          const engageEnt = taskForce.sharedTargetId
-            ? world.entities.find((e) => e.id === taskForce.sharedTargetId && !e.destroyed)
+          // Gate the shared designation through allowedHostileIds() — under
+          // WEAPONS TIGHT that now refuses an unidentified track (see
+          // TaskForceCoop.isClearedToEngage). Escorts simply don't get handed
+          // an engage target for it until the TAO console clears it.
+          const allowed = taskForce.allowedHostileIds();
+          const clearedSharedId = taskForce.sharedTargetId && (!allowed || allowed.has(taskForce.sharedTargetId))
+            ? taskForce.sharedTargetId
+            : null;
+          const engageEnt = clearedSharedId
+            ? world.entities.find((e) => e.id === clearedSharedId && !e.destroyed)
             : null;
           const ap = autopilots[shipId];
           ap.helmEnabled = !helmHuman;
@@ -1457,7 +1635,7 @@ function animate() {
           if (ap.role === 'lead') {
             ap.breakFormation = taskForce.weaponsPolicy === 'free' && !!engageEnt;
           }
-          ap.setEngageTarget(taskForce.sharedTargetId);
+          ap.setEngageTarget(clearedSharedId);
           ap.update(dt, {
             anchorShip: ships.player,
             playerShip: ships.player,
@@ -1470,7 +1648,7 @@ function animate() {
             onDisengage: (autoShip) => announceAiDisengagement(autoShip),
             onBrainChatter: announceBrainChatter,
             weaponsPolicy: taskForce.weaponsPolicy,
-            sharedTargetId: taskForce.sharedTargetId,
+            sharedTargetId: clearedSharedId,
             allies: Object.values(ships),
           });
         }
@@ -1530,10 +1708,15 @@ function animate() {
     const wp = mission.currentWaypoint;
     if (wp && ships.player.group.position.distanceTo(wp) < 500) mission.flag('nearWaypoint0');
     const spawnReq = mission.consumeSpawnRequest();
-    if (spawnReq) { world.spawnWave(spawnReq, wp || ships.player.group.position); hostileWaveSpawned = true; }
+    if (spawnReq) {
+      world.spawnWave(spawnReq, wp || ships.player.group.position);
+      hostileWaveSpawned = true;
+      if (spawnReq === 'ambiguous_inbound') beginAmbiguousScenario();
+    }
     if (hostileWaveSpawned && world.hostiles.length === 0) {
       mission.flag('wave1Cleared'); mission.flag('subCleared'); mission.flag('airWaveCleared');
     }
+    pollAmbiguousScenario();
 
     audio.setListenerPosition(camera.position.x, camera.position.y, camera.position.z);
     const camFwd = new THREE.Vector3(); camera.getWorldDirection(camFwd);
@@ -1627,6 +1810,26 @@ function animate() {
         isLand: true,
       });
     }
+
+    // Player-knowledge identification pass (see IdentificationTracker.js) — every
+    // contact currently on the plot gets seeded (first sighting only; a no-op
+    // afterward) so the TAO/AEGIS console can render "player knows" separately
+    // from "entity actually is." Land/nav/inbound-ordnance/friendly contacts
+    // auto-resolve inside seed(); everything else starts unresolved until an IFF
+    // interrogation (I, at TAO) or Lookout's Visual ID report clears it.
+    for (const c of lastContacts) idTracker.seed(c.id, c.iff, c.domain);
+    const finishedInterrogation = idTracker.update();
+    if (finishedInterrogation) {
+      const c = lastContacts.find((x) => x.id === finishedInterrogation.id);
+      commsLog.push({
+        speaker: 'AEGIS',
+        text: `IFF returns ${finishedInterrogation.knownIff} — ${c?.name || 'track'} reclassified ${String(finishedInterrogation.knownIff).toLowerCase()}.`,
+        urgency: finishedInterrogation.knownIff === 'HOSTILE' ? 'warning' : 'normal',
+      });
+      audio.playRadioBlip();
+      scenarioRun?.noteResolved(finishedInterrogation.id, finishedInterrogation.knownIff);
+    }
+    idTracker.prune(new Set(lastContacts.map((c) => c.id)));
 
     // Weapons director: highlight contacts under the reticle without stealing the
     // designation or slewing the camera (that was whipping the perspective).
@@ -1734,6 +1937,11 @@ function animate() {
           id: c.id,
           name: c.name,
           iff: c.iff,
+          // Player-knowledge affiliation — see IdentificationTracker.js. Only the
+          // TAO/AEGIS console reads this; every other consumer of `iff` above
+          // (Weapons target readout, Radar's GCCS-M table, TacticalRadar) is
+          // untouched and keeps showing ground truth, same as before.
+          knownIff: idTracker.knownIffFor(c.id),
           domain: c.domain,
           x: c.x,
           z: c.z,
@@ -1748,6 +1956,15 @@ function animate() {
         lookBearing: playerController.getLookBearingDeg(),
         sighted,
         taskForceStatus: taskForce.status,
+        // AEGIS console's live IFF-interrogation readout (progress bar + status
+        // line) for whichever track is currently hooked, if any interrogation is
+        // in flight at all.
+        interrogation: weapons.selectedTargetId != null
+          ? (() => {
+            const progress = idTracker.interrogationProgress(weapons.selectedTargetId);
+            return progress == null ? null : { id: weapons.selectedTargetId, progress };
+          })()
+          : null,
       });
     }
   }

@@ -49,8 +49,22 @@ const BEATS = [
     spawn: 'airWave',
   },
   {
-    id: 'final',
+    // Grounded in a real, documented failure mode — see WorldManager's
+    // spawnWave('ambiguous_inbound') and TaoDebrief.js for the full framing.
+    // This is NOT a hard-fail beat: main.js flags 'ambiguousResolved' whether
+    // the player gets it right or wrong, so a wrong call costs a bad debrief,
+    // not a stuck campaign. See main.js's scenario-resolution polling.
+    id: 'ambiguous_contact',
     trigger: 'airWaveCleared',
+    comms: [
+      { speaker: 'CIC', text: 'New air contact, unresolved IFF, bearing correlates with a closing/descending profile. Second contact also inbound on a separate bearing — work both, but do not engage the unresolved track without a positive ID.', urgency: 'warning' },
+    ],
+    objective: { text: 'Two inbound air contacts — identify before you engage either one', useWaypoint: 0 },
+    spawn: 'ambiguous_inbound',
+  },
+  {
+    id: 'final',
+    trigger: 'ambiguousResolved',
     comms: [
       { speaker: 'TASK FORCE ACTUAL', text: 'Well done, MERIDIAN. Station VIGIL is secure. Return to formation and stand by for further tasking.', urgency: 'normal' },
     ],

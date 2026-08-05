@@ -407,13 +407,19 @@
   bottom: 28px;
   width: min(280px, 28vw);
 }
-/* TAO owns the full Motif workstation — hide ShipHUD twins that collide with
-   the GCCS-M window, tuck coop/comms into a thin right strip clear of the chart,
-   and keep the corner tactical radar hidden (main.js hides it; CSS is the belt). */
+/* TAO owns its own AEGIS combat-control console (see stations.css .stn-aegis) —
+   hide ShipHUD twins that collide with it, keep the corner tactical radar hidden
+   (main.js hides it; CSS is the belt), and — since the console's own "Engagement
+   Doctrine" pane already shows weapons-policy/designated-track status — hide the
+   global Task Force Net coop-panel entirely rather than repositioning it: with
+   both visible they show the same information and visually collide (confirmed
+   live: the coop-panel's old "thin right strip" position landed on top of the
+   console's own doctrine pane instead of clearing it). */
 #ui-root[data-seat="TAO"] .shud-bottom-left,
 #ui-root[data-seat="TAO"] .shud-bottom-right,
 #ui-root[data-seat="TAO"] .shud-objective,
-#ui-root[data-seat="TAO"] .tac-radar {
+#ui-root[data-seat="TAO"] .tac-radar,
+#ui-root[data-seat="TAO"] .coop-panel {
   opacity: 0 !important;
   pointer-events: none !important;
   visibility: hidden !important;
@@ -422,13 +428,6 @@
   opacity: 0.55;
   transform: scale(0.85);
   transform-origin: top center;
-}
-#ui-root[data-seat="TAO"] .coop-panel {
-  top: 78px;
-  right: 18px;
-  width: min(200px, 18vw);
-  max-height: 140px;
-  overflow: hidden;
 }
 #ui-root[data-seat="TAO"] .comms-log {
   right: 18px;

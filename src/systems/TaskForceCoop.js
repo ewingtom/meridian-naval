@@ -23,6 +23,7 @@ export class TaskForceCoop {
     setSelectedTargetId,
     getLocalShip,
     onSharedTrack,
+    getKnownIff,
   } = {}) {
     this.ships = ships;
     this.autopilots = autopilots;
@@ -33,9 +34,16 @@ export class TaskForceCoop {
     this.setSelectedTargetId = setSelectedTargetId || (() => {});
     this.getLocalShip = getLocalShip || (() => ships?.player);
     this.onSharedTrack = onSharedTrack || (() => {});
+    // The player's CURRENT KNOWLEDGE of a track's affiliation (see
+    // IdentificationTracker.js) — separate from its ground-truth `iff`. Only
+    // consulted by isClearedToEngage()/allowedHostileIds() below, for the
+    // WEAPONS TIGHT gate. Defaults to "always resolved hostile" so a caller
+    // that doesn't wire this up (e.g. a unit test) gets the pre-existing
+    // behavior rather than a silent everything-blocked regression.
+    this.getKnownIff = getKnownIff || (() => 'HOSTILE');
 
     this.sharedTargetId = null;
-    this.weaponsPolicy = 'hold'; // 'hold' | 'free'
+    this.weaponsPolicy = 'hold'; // 'hold' | 'tight' | 'free' — NATO weapons-control states
     this.lastPingAt = -999;
     this.lastOrderAt = -999;
     this._affirmNeeded = false;
@@ -159,6 +167,40 @@ export class TaskForceCoop {
     return true;
   }
 
+  /** WEAPONS TIGHT — the middle NATO weapons-control state, between free (engage any
+   * qualifying target) and hold (engage nothing but self-defense): units may only
+   * engage the currently designated/shared track, never any hostile a sensor happens
+   * to pick up. Functionally close to `engageShared()` but doesn't force a track to be
+   * shared first and doesn't imply "prosecute now" — it's a standing posture: "if
+   * something's designated, you may fire on it; if nothing is, hold." */
+  weaponsTight() {
+    this.weaponsPolicy = 'tight';
+    // Closing a known gap: TIGHT used to hand escorts the shared track the moment
+    // it was designated, with no check that it had actually been identified —
+    // which defeated the entire point of the state (see isClearedToEngage's doc
+    // comment). A designated-but-unresolved track now drives no engagement at all
+    // until the TAO console actually clears it.
+    const cleared = this.isClearedToEngage(this.sharedTargetId);
+    for (const ap of Object.values(this.autopilots || {})) {
+      if (!ap || ap.ship === this.getLocalShip()) continue;
+      ap.setEngageTarget(cleared ? this.sharedTargetId : null);
+      ap.breakFormation = false;
+    }
+    const ent = this._resolveTarget(this.sharedTargetId);
+    let text;
+    if (!this.sharedTargetId) text = 'Weapons tight — hold fire pending designation.';
+    else if (!cleared) text = `Weapons tight — ${ent?.name || 'designated track'} not yet positively identified. Interrogate IFF before engagement.`;
+    else text = `Weapons tight — cleared to engage ${ent?.name || 'designated track'} only.`;
+    this.onComms({
+      speaker: `${shortCall(this.getLocalShip())} WEAPONS`,
+      text,
+      urgency: 'warning',
+    });
+    this._escortAck('Weapons tight, copy.');
+    this._mark('tight');
+    return true;
+  }
+
   requestEscortPing() {
     const now = performance.now() / 1000;
     if (now - this.lastPingAt < 8) {
@@ -208,11 +250,36 @@ export class TaskForceCoop {
     return true;
   }
 
-  /** Autopilot weapons filter — when policy is hold, escorts only shoot if explicitly tasked. */
+  /** WEAPONS TIGHT's actual doctrinal point: the designated track is only
+   *  cleared to engage once it's been POSITIVELY IDENTIFIED — a shared/
+   *  designated-but-unresolved contact is not "cleared," it's just "known
+   *  about." FREE bypasses this (an operator choosing FREE has already
+   *  accepted "any qualifying target"); HOLD blocks everything regardless of
+   *  ID status. This was a known gap (see the old comment on allowedHostileIds
+   *  below, now fixed) — it existed because there was no separate "player
+   *  knowledge" state to check against; see IdentificationTracker.js. */
+  isClearedToEngage(id) {
+    if (!id) return false;
+    if (this.weaponsPolicy === 'hold') return false;
+    if (this.weaponsPolicy === 'free') return true;
+    return String(this.getKnownIff(id)).toUpperCase() === 'HOSTILE';
+  }
+
+  /** Autopilot weapons filter:
+   *  FREE  — any qualifying hostile, or just the shared track if one's designated.
+   *  TIGHT — only the designated/shared track, AND only once it's cleared per
+   *          isClearedToEngage() above — never "any hostile" even if one's in
+   *          range, and never an undesignated-or-unresolved track either.
+   *  HOLD  — nothing, unless an AP has its own explicit engage target set. */
   allowedHostileIds() {
     if (this.weaponsPolicy === 'free' && this.sharedTargetId) return new Set([this.sharedTargetId]);
     if (this.weaponsPolicy === 'free') return null; // any hostile
-    return new Set(); // hold — empty set means fire none unless engage target set on AP
+    if (this.weaponsPolicy === 'tight') {
+      return this.sharedTargetId && this.isClearedToEngage(this.sharedTargetId)
+        ? new Set([this.sharedTargetId])
+        : new Set();
+    }
+    return new Set(); // hold
   }
 
   _resolveTarget(id) {
