@@ -69,20 +69,24 @@ export class MainMenu {
             <span class="meridian-btn-index">01</span>
             <span class="meridian-btn-label">New Patrol</span>
           </button>
-          <button class="meridian-btn" data-action="continue" style="--i:1">
+          <button class="meridian-btn" data-action="training" style="--i:1">
             <span class="meridian-btn-index">02</span>
+            <span class="meridian-btn-label">TAO Training</span>
+          </button>
+          <button class="meridian-btn" data-action="continue" style="--i:2">
+            <span class="meridian-btn-index">03</span>
             <span class="meridian-btn-label">Continue</span>
           </button>
-          <button class="meridian-btn" data-action="multiplayer" style="--i:2">
-            <span class="meridian-btn-index">03</span>
+          <button class="meridian-btn" data-action="multiplayer" style="--i:3">
+            <span class="meridian-btn-index">04</span>
             <span class="meridian-btn-label">Multiplayer</span>
           </button>
-          <button class="meridian-btn" data-action="settings" style="--i:3">
-            <span class="meridian-btn-index">04</span>
+          <button class="meridian-btn" data-action="settings" style="--i:4">
+            <span class="meridian-btn-index">05</span>
             <span class="meridian-btn-label">Settings</span>
           </button>
-          <button class="meridian-btn" data-action="credits" style="--i:4">
-            <span class="meridian-btn-index">05</span>
+          <button class="meridian-btn" data-action="credits" style="--i:5">
+            <span class="meridian-btn-index">06</span>
             <span class="meridian-btn-label">Credits</span>
           </button>
         </nav>
@@ -106,6 +110,7 @@ export class MainMenu {
     }
 
     this.root.querySelector('[data-action="newPatrol"]').addEventListener('click', () => this.options.onNewPatrol?.());
+    this.root.querySelector('[data-action="training"]').addEventListener('click', () => this.options.onTraining?.());
     continueBtn.addEventListener('click', () => {
       if (this.options.continueEnabled === false) return;
       this.options.onContinue?.();

@@ -6,6 +6,13 @@ import { MerchantShip } from '../entities/MerchantShip.js';
 import { buildEnemyShipMesh } from '../entities/geometryKits.js';
 import { IFF } from '../entities/Entity.js';
 
+/** Civilian hull-name roster so repeat merchant top-ups read as different vessels. */
+const MERCHANT_NAMES = [
+  'MV Kestrel Bay', 'MV Andaman Trader', 'MT Corsica Star', 'MV Harbin Maru',
+  'MV Ostend Pioneer', 'MT Sable Reach', 'MV Cape Ferrol', 'MV Ninety Fathom',
+  'FV Marisol', 'FV Northern Gannet', 'MV Aleutian Dawn', 'MT Kithira Spirit',
+];
+
 export class WorldManager {
   constructor(scene, weapons) {
     this.scene = scene;
@@ -134,10 +141,24 @@ export class WorldManager {
    * patrol area, visible on radar (amber "unknown" blip, since it's not a military
    * IFF) and by eye, but unarmed and never engaging. Gives the ocean a sense of a
    * living, working sea rather than only player + military units. */
-  spawnMerchantTraffic(aroundPos) {
-    const a = aroundPos.clone().add(new THREE.Vector3(-2800, 0, -1200));
-    const b = aroundPos.clone().add(new THREE.Vector3(2600, 0, 2400));
-    this.entities.push(new MerchantShip({ name: 'MV Kestrel Bay', position: a.clone(), waypoints: [a, b], scene: this.scene }));
+  spawnMerchantTraffic(aroundPos, opts = {}) {
+    // A working sea has more than one hull on it, and they don't all run the same lane.
+    // Randomising the name and the transit axis means repeat top-ups from DynamicOps
+    // read as different vessels going different places instead of clones of MV Kestrel
+    // Bay stacked on one another.
+    const name = opts.name || MERCHANT_NAMES[Math.floor(Math.random() * MERCHANT_NAMES.length)];
+    const ang = opts.laneAngle != null ? opts.laneAngle : Math.random() * Math.PI * 2;
+    const halfLane = 2400 + Math.random() * 1400;
+    const off = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang)).multiplyScalar(halfLane);
+    // Push the lane off the player's own position so traffic crosses the area rather
+    // than steaming straight down the ship's throat.
+    const cross = new THREE.Vector3(-off.z, 0, off.x).normalize()
+      .multiplyScalar((Math.random() - 0.5) * 2600);
+    const a = aroundPos.clone().add(off).add(cross);
+    const b = aroundPos.clone().sub(off).add(cross);
+    const ship = new MerchantShip({ name, position: a.clone(), waypoints: [a, b], scene: this.scene });
+    this.entities.push(ship);
+    return ship;
   }
 
   /** Distant task-force silhouettes on the horizon — purely decorative dressing (not

@@ -12,9 +12,13 @@ import { WeaponsSystem } from './weapons/WeaponsSystem.js';
 import { RadarSystem } from './systems/RadarSystem.js';
 import { MissionSystem } from './systems/MissionSystem.js';
 import { DynamicOps } from './systems/DynamicOps.js';
+import { WeatherSystem, WEATHER_STATES } from './systems/WeatherSystem.js';
 import { TaskForceCoop } from './systems/TaskForceCoop.js';
 import { IdentificationTracker } from './systems/IdentificationTracker.js';
 import { ScenarioRun } from './systems/TaoDebrief.js';
+import { TaoTraining } from './systems/TaoTraining.js';
+import { ScenarioLadder, SCENARIOS } from './systems/ScenarioLadder.js';
+import { TrainingPanel } from './ui/training/TrainingPanel.js';
 import { WorldManager } from './world/WorldManager.js';
 import { buildIsland } from './world/Island.js';
 import { AudioEngine } from './audio/AudioEngine.js';
@@ -40,6 +44,12 @@ pipeline.bindSunLight(sky.sunLight);
 const fogColor = new THREE.Color(0x9dc3dc);
 scene.fog = new THREE.FogExp2(fogColor.getHex(), 0.00024);
 ocean.setFogColor(fogColor);
+
+// Dynamic weather owns fog density/colour, sun/hemi light, sky gradient + cloud cover,
+// ocean sea state and the rain curtain from here on — the constants above are only the
+// pre-first-frame value. Everything is cross-faded, never assigned outright; see
+// systems/WeatherSystem.js.
+const weather = new WeatherSystem({ scene, sky, ocean, camera, initial: 'clear' });
 
 // ============================ CREWED SHIPS ============================
 // Every ship a human can board: the hero Meridian and the two task-force escorts. All
@@ -432,6 +442,12 @@ const dynamicOps = new DynamicOps({
   world,
   ships,
   mission,
+  weather,
+  // Real scene landmarks so NAV/littoral chatter cites geography that actually exists.
+  landmarks: [
+    { name: 'VIGIL ISLAND', position: island.group.position },
+    { name: 'the unnamed islet', position: islet.group.position },
+  ],
   coop: taskForce,
   onComms: (line) => { commsLog.push(line); audio.playRadioBlip(); },
   onObjectiveHint: (order) => setOpsObjective(order),
@@ -463,6 +479,8 @@ let settingsIsOpen = false;
 function applyGraphicsQuality(q) {
   pipeline.setQuality(q);
   ocean.setQuality(q);
+  // Rain follows the same gate as the post stack: off at 'low', scaled above it.
+  weather.setQuality(q);
 }
 applyGraphicsQuality(settings.values.graphicsQuality);
 
@@ -542,6 +560,55 @@ function closeDebrief() {
   const def = STATION_DEFS[playerController.state];
   if (!def?.cursorMode) canvas.requestPointerLock();
 }
+
+// ---- Guided TAO schoolhouse patrol — see systems/TaoTraining.js for the step
+// machine and ui/training/TrainingPanel.js for the instructor card. Entirely
+// opt-in from the main menu: it spawns its own tagged, non-lethal contacts and
+// cleans them up on graduation so a schoolhouse track never leaks into a live
+// patrol. ----
+const trainingPanel = new TrainingPanel();
+trainingPanel.mount(uiRoot);
+const taoTraining = new TaoTraining({
+  onComms: (line) => commsLog.push(line),
+  onStep: (step) => trainingPanel.show(step),
+  onComplete: () => {
+    taoTraining.cleanup(trainingCtx());
+    commsLog.push({
+      speaker: 'HORIZON ACTUAL',
+      text: 'Schoolhouse complete. Standing by to hand you a live patrol whenever you are ready.',
+      urgency: 'normal',
+    });
+  },
+});
+/** The state bundle TaoTraining and ScenarioLadder poll each frame. Assembled
+ *  fresh per call so it always reflects live references rather than a stale
+ *  snapshot. */
+function trainingCtx() {
+  return { playerController, stationOverlay, taskForce, idTracker, weapons, world, ships, scene, Station };
+}
+
+// ---- Graded drill ladder — see systems/ScenarioLadder.js. Shares the
+// instructor card with the schoolhouse (a drill brief is the same kind of
+// object as a tutorial step) and routes its outcome into the existing
+// DebriefPanel rather than inventing a second results screen. ----
+const scenarioLadder = new ScenarioLadder({
+  onComms: (line) => commsLog.push(line),
+  onBrief: (scenario) => {
+    if (!scenario) { trainingPanel.show(null); return; }
+    trainingPanel.show({
+      id: `drill:${scenario.id}`,
+      title: scenario.name,
+      body: `<b>Tests:</b> ${scenario.tests}<br><br>${scenario.brief}`,
+      hint: null,
+      index: scenario.tier - 1,
+      total: SCENARIOS.length,
+    });
+  },
+  onComplete: (scoreCard) => {
+    lastDebriefScore = scoreCard;
+    openDebrief();
+  },
+});
 
 // ---- "Ambiguous inbound" TAO scenario bookkeeping — see WorldManager's
 // spawnWave('ambiguous_inbound') for what actually gets spawned and
@@ -724,6 +791,17 @@ const mainMenu = new MainMenu({
     playerController.setShip(localShip);
     beginPatrol();
   },
+  onTraining: () => {
+    unlockAudio();
+    mainMenu.hide();
+    localShipId = 'player';
+    localShip = ships.player;
+    playerController.setShip(localShip);
+    // Same entry path as a live patrol (intro sweep, HUD handoff) so the
+    // schoolhouse doesn't feel like a separate lesser mode — then the step
+    // machine takes over once the player actually has control.
+    beginPatrol(() => taoTraining.start(trainingCtx()));
+  },
   onContinue: () => {
     mainMenu.hide();
     gameStarted = true;
@@ -744,7 +822,7 @@ const mainMenu = new MainMenu({
 mainMenu.mount(uiRoot);
 mainMenu.show();
 
-function beginPatrol() {
+function beginPatrol(onReady) {
   unlockAudio();
   if (!mission.started) {
     mission.start();
@@ -758,6 +836,7 @@ function beginPatrol() {
     hud.show(); tacRadar.show();
     coopPanel.show();
     showControlsIntro();
+    onReady?.();
   });
 }
 
@@ -1521,6 +1600,15 @@ window.GAME = {
   pipeline, sky, ocean, camera, scene, renderer, THREE, ships, localShipId, cameraRig, playerController,
   weapons, radar, world, mission, audio, hud, tacRadar, mainMenu, pauseMenu, settings, commsLog,
   damageVignette, island, islet, stationOverlay, Station, mp, lobby, dynamicOps, taskForce, coopPanel,
+  // ---- Weather debug surface ----
+  // window.GAME.setWeather('squall')      -> normal slow cross-fade (40-80s)
+  // window.GAME.setWeather('squall', 0)   -> instant, for deterministic screenshots
+  // window.GAME.weatherReport()           -> { state, visibilityKm, seaState, raining }
+  weather,
+  WEATHER_STATES,
+  setWeather: (name, durationSec) => weather.setWeather(name, durationSec),
+  weatherReport: () => weather.report,
+  setWeatherAuto: (on) => weather.setAuto(on),
   // TAO identification/scenario/debrief debug surface — getters since scenarioRun
   // and lastDebriefScore are reassigned over the run rather than mutated in place.
   idTracker, debriefPanel,
@@ -1528,6 +1616,10 @@ window.GAME = {
   getLastDebriefScore: () => lastDebriefScore,
   beginIffInterrogation, openDebrief, closeDebrief,
   beginAmbiguousScenario, finishAmbiguousScenario,
+  taoTraining, trainingPanel, scenarioLadder, SCENARIOS,
+  startTaoTraining: () => taoTraining.start(trainingCtx()),
+  startDrill: (id) => scenarioLadder.start(id ?? null, trainingCtx()),
+  listDrills: () => SCENARIOS.map((s) => ({ id: s.id, tier: s.tier, name: s.name, tests: s.tests })),
 };
 const frameDumper = installFrameDumper(renderer);
 window.GAME.dumpFrames = frameDumper.dumpFrames;
@@ -1672,6 +1764,9 @@ function animate() {
     shakeMag *= 0.88;
   } else shakeMag = 0;
 
+  // Weather runs outside the `active` gate so the sea/sky keep breathing on the main
+  // menu and during the intro cinematic too — pausing the world shouldn't freeze the sky.
+  weather.update(dt, elapsed);
   sky.setFollowTarget(localShip.group.position);
   sky.update(camera, elapsed);
   ocean.setShipState(localShip);
@@ -1717,6 +1812,8 @@ function animate() {
       mission.flag('wave1Cleared'); mission.flag('subCleared'); mission.flag('airWaveCleared');
     }
     pollAmbiguousScenario();
+    taoTraining.update(dt, trainingCtx());
+    scenarioLadder.update(dt, trainingCtx());
 
     audio.setListenerPosition(camera.position.x, camera.position.y, camera.position.z);
     const camFwd = new THREE.Vector3(); camera.getWorldDirection(camFwd);

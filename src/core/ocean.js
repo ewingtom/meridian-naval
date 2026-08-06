@@ -18,6 +18,13 @@ const WAVE_SET = [
 function buildWaveGLSL() {
   let decl = `#define NUM_WAVES ${WAVE_SET.length}\n`;
   decl += `uniform vec4 uWaveA[NUM_WAVES];\nuniform vec2 uWaveB[NUM_WAVES];\n`;
+  // uWaveAmp must be declared HERE, alongside the other wave uniforms, rather than
+  // with the per-shader uniform block below: this string is inlined at the very top
+  // of OCEAN_VERTEX, ahead of that block, and the Gerstner function it precedes
+  // reads uWaveAmp. Declaring it later made the vertex shader fail to compile
+  // outright ("'uWaveAmp' : undeclared identifier"), which silently took the whole
+  // ocean surface out of the render.
+  decl += `uniform float uWaveAmp;\n`;
   return decl;
 }
 
@@ -46,7 +53,12 @@ vec3 gerstner(vec3 p, float t, vec3 camPos, out vec3 tangent, out vec3 binormal)
     float c = sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
     float f = k * (dot(dir, p.xz) - c * t * 3.0);
     float distFade = 1.0 - smoothstep(wavelength * 10.0, wavelength * 26.0, distToCam);
-    float a = steepness / k / float(NUM_WAVES) * 3.35 * mix(1.0, distFade, step(wavelength, 38.0));
+    // uWaveAmp is the weather-driven sea state (1.0 = the hand-tuned calm baseline).
+    // It scales amplitude only — steepness ratios, wavelengths and the anti-alias
+    // distance fade above are untouched, so a rising sea can't push k*a past the
+    // Gerstner self-intersection limit or reintroduce the mid-field waffle moire.
+    float a = steepness / k / float(NUM_WAVES) * 3.35 * uWaveAmp
+      * mix(1.0, distFade, step(wavelength, 38.0));
     offset.x += dir.x * a * cos(f);
     offset.z += dir.y * a * cos(f);
     offset.y += a * sin(f) * 0.92;
@@ -379,6 +391,9 @@ export class OceanField {
       uShallowColor: { value: new THREE.Color(0x14606a) },
       uFogColor: { value: new THREE.Color(0xa8bcc8) },
       uFogDensity: { value: 0.00095 },
+      // Weather-driven sea state multiplier (see WeatherSystem). 1.0 == the calm
+      // baseline this ocean was originally tuned against.
+      uWaveAmp: { value: 1.0 },
       uDetailLevel: { value: 0.85 },
       uShipPos: { value: new THREE.Vector3() },
       uShipSpeed: { value: 0 },
@@ -438,6 +453,20 @@ export class OceanField {
     this.uniforms.uDetailLevel.value = levels[q] ?? 0.75;
   }
 
+  /**
+   * Weather-driven wave amplitude. Also mirrored into getHeightAt() below so buoyancy,
+   * wakes and every other CPU-side wave query stay locked to what the GPU draws — a
+   * mismatch here would float hulls above/below the visible surface as the sea builds.
+   */
+  setSeaState(amp) {
+    const a = Math.max(0.35, Math.min(2.0, amp));
+    this.uniforms.uWaveAmp.value = a;
+  }
+
+  get seaState() {
+    return this.uniforms.uWaveAmp.value;
+  }
+
   /** Drive hull-proximal foam from the local ship each frame. */
   setShipState(ship) {
     if (!ship?.group) return;
@@ -465,11 +494,12 @@ export class OceanField {
   // Sample wave height + hull wake displacement (must match vertex shader for coupling)
   getHeightAt(x, z, t) {
     let y = 0;
+    const waveAmp = this.uniforms.uWaveAmp.value;
     for (const [dx, dz, steepness, wavelength, speed] of WAVE_SET) {
       const k = (2 * Math.PI) / wavelength;
       const c = Math.sqrt(9.8 / k) * speed * 0.35 + speed * 0.15;
       const f = k * (dx * x + dz * z - c * t * 3.0);
-      const a = (steepness / k / WAVE_SET.length) * 3.35;
+      const a = (steepness / k / WAVE_SET.length) * 3.35 * waveAmp;
       y += a * Math.sin(f) * 0.92;
     }
     const ship = this.uniforms.uShipPos.value;

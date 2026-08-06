@@ -40,12 +40,29 @@ export class Aircraft extends Entity {
     try {
       const gltf = await new GLTFLoader().loadAsync(AIR_MODEL_URL);
       const inst = gltf.scene.clone(true);
+
+      // Axis reconciliation — same class of bug as enemy_submarine.glb (see
+      // Submarine._tryLoadBlenderHull). build_aircraft.py authors nose=+Z / up=+Y
+      // in Blender space, but exports with `export_yup=True`, which maps Blender
+      // (X,Y,Z) -> glTF (X, Z, -Y). The nose therefore lands on glTF +Y, so the
+      // raw model measures 11.7 wide x 19.65 "tall" x 3.5 "long" — i.e. every
+      // aircraft in the game was standing vertically on its tail. Verified by
+      // sampling geometry: past z<-6 the mesh is 0.42m wide (the tapering nose),
+      // past z>+6 it is 2.1m wide and 2.17m tall (horizontal stabs + canted fins).
+      // This rotation puts the nose on -Z to match Entity.forward, which is
+      // (0,0,-1) at heading 0, and leaves the fins pointing +Y.
+      inst.rotation.set(Math.PI / 2, 0, Math.PI);
+      inst.updateMatrixWorld(true);
+
       const box = new THREE.Box3().setFromObject(inst);
       const size = new THREE.Vector3();
       box.getSize(size);
-      const targetSpan = 16; // ~wingspan meters
-      const s = targetSpan / Math.max(size.x, size.z, 1);
-      inst.scale.setScalar(s);
+      // Scale off the SPAN (X) specifically. The old `max(size.x, size.z)` picked
+      // whichever axis happened to be longest, which after the rotation above is
+      // the fuselage — that would have quietly turned "16m wingspan" into "16m
+      // overall length" and shrunk the aircraft by a third.
+      const targetSpan = 16; // wingspan, metres
+      if (size.x > 1) inst.scale.setScalar(targetSpan / size.x);
       inst.traverse((o) => {
         if (o.isMesh) {
           o.castShadow = true;

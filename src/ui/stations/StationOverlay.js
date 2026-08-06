@@ -716,6 +716,15 @@ export class StationOverlay {
     else if (this._station === 'TAO') this._updateTaoAegis(state);
   }
 
+  /** The track currently hooked on the AEGIS console, or null. Public because
+   *  the TAO training scenario (systems/TaoTraining.js) polls it to know when
+   *  the player has actually selected a track — it must see the same value the
+   *  console renders from, whether the hook came from a plot click or a table
+   *  row, so it reads this rather than listening for either input path. */
+  get hookedTrackId() {
+    return this._aegSelectedId ?? null;
+  }
+
   triggerSonarPulse() {
     // Same "N — Ping" order fires this at any station; SONAR gets the sweep bar,
     // TAO's AEGIS console gets its own expanding-ring feedback below — previously

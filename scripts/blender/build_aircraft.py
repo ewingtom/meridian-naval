@@ -271,43 +271,117 @@ bpy.ops.object.transform_apply(rotation=True)
 nose.data.materials.append(mat_radar)
 shade(nose)
 
-# Main wings (left + right tapered slabs with sweep)
-for side, xs in (("L", -0.15), ("R", 0.15)):
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(xs, -0.05, 0.2))
-    wing = bpy.context.active_object
-    wing.name = f"Wing_{side}"
-    wing.scale = (5.8, 0.11, 2.2)
-    bpy.ops.object.transform_apply(scale=True)
-    for v in wing.data.vertices:
-        span = abs(v.co.x)
-        v.co.z -= span * 0.14
-        v.co.x *= 1.0 + span * 0.018
-        tip_t = span / 5.8
-        v.co.z *= 1.0 - tip_t * 0.35
-    wing.data.materials.append(mat_skin)
-    apply_bevel(wing, 0.04, 2)
-    shade(wing, 28)
+# ---------------------------------------------------------------------------
+# Lifting surfaces
+#
+# These used to be scaled cubes (`wing.scale = (5.8, 0.11, 2.2)`) with a couple
+# of vertices nudged for sweep. At any angle where light grazed the surface that
+# read as exactly what it was — a flat plank with a hard edge — and it was the
+# single most obviously-procedural thing in the game.
+#
+# Every flying surface is now lofted from a real NACA 4-digit symmetric section,
+# so it has a rounded leading edge, a proper thickness distribution peaking near
+# 30% chord, and a sharp trailing edge. That silhouette is what actually sells
+# "aircraft" at the ranges this model is seen from, far more than panel-line
+# detail does.
+# ---------------------------------------------------------------------------
 
-# LERX (leading-edge root extensions)
-for side, x in (("L", -0.9), ("R", 0.9)):
-    add_box(f"LERX_{side}", (x, 0.35, 1.8), (0.55, 0.08, 1.6), mat_skin, 0.025, 2)
+def naca_symmetric(t, n=22):
+    """Half-thickness profile of a NACA 00xx section, sampled with a cosine
+    spacing so points cluster at the leading edge where curvature is highest.
+    Returns [(x_fraction_of_chord, half_thickness_fraction), ...]."""
+    pts = []
+    for i in range(n):
+        beta = math.pi * i / (n - 1)
+        x = (1.0 - math.cos(beta)) * 0.5
+        y = 5 * t * (0.2969 * math.sqrt(x) - 0.1260 * x - 0.3516 * x * x
+                     + 0.2843 * x ** 3 - 0.1015 * x ** 4)
+        pts.append((x, y))
+    pts[-1] = (1.0, 0.0)  # close the trailing edge to a true point
+    return pts
 
-# Wing leading-edge metal strips
-for side, xs in (("L", -0.15), ("R", 0.15)):
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(xs, 0.08, 0.15))
-    le = bpy.context.active_object
-    le.name = f"WingLE_{side}"
-    le.scale = (5.6, 0.04, 2.05)
-    bpy.ops.object.transform_apply(scale=True)
-    for v in le.data.vertices:
-        span = abs(v.co.x)
-        v.co.z -= span * 0.14
-        v.co.x *= 1.0 + span * 0.018
-        tip_t = span / 5.6
-        v.co.z *= 1.0 - tip_t * 0.35
-    le.data.materials.append(mat_metal)
-    apply_bevel(le, 0.012, 1)
-    shade(le)
+
+def build_airfoil_surface(name, mat, *, root_chord, tip_chord, span,
+                          sweep, thickness, dihedral=0.0, twist=0.0,
+                          root_pos=(0.0, 0.0, 0.0), mirror=False,
+                          sections=6, tip_round=True):
+    """Loft a wing/stabiliser from root to tip out of NACA sections.
+
+    Ship-local axes here match the rest of this project's Blender authoring
+    space: +Z is forward (nose), +Y is up, +X is starboard. Span therefore runs
+    along X, chord along Z, and thickness along Y.
+    """
+    verts, faces = [], []
+    ring_len = None
+    for s in range(sections):
+        f = s / (sections - 1)
+        # Elliptical planform taper reads far more like a real wing than the
+        # straight linear taper this had before.
+        chord = root_chord + (tip_chord - root_chord) * (1.0 - math.sqrt(1.0 - f * f))
+        x = span * f * (-1.0 if mirror else 1.0)
+        y = math.sin(math.radians(dihedral)) * span * f
+        z = -sweep * f
+        tw = math.radians(twist * f)
+        prof = naca_symmetric(thickness, 22)
+        ring = []
+        # Upper surface fore->aft, then lower surface aft->fore, so the ring is
+        # a single closed loop the quad-strip below can walk.
+        for sgn in (1, -1):
+            seq = prof if sgn > 0 else list(reversed(prof[1:-1]))
+            for (cx, cy) in seq:
+                lz = (0.5 - cx) * chord          # +Z forward => LE at +chord/2
+                ly = cy * sgn * chord
+                rz = lz * math.cos(tw) - ly * math.sin(tw)
+                ry = lz * math.sin(tw) + ly * math.cos(tw)
+                ring.append((x + root_pos[0], y + ry + root_pos[1], z + rz + root_pos[2]))
+        if ring_len is None:
+            ring_len = len(ring)
+        base = len(verts)
+        verts.extend(ring)
+        if s > 0:
+            prev = base - ring_len
+            for i in range(ring_len):
+                j = (i + 1) % ring_len
+                # Wind consistently outward on both wings; mirroring the span
+                # flips handedness, so flip the quad to keep normals out.
+                q = (prev + i, prev + j, base + j, base + i)
+                faces.append(q[::-1] if mirror else q)
+    if tip_round:
+        tip_base = len(verts) - ring_len
+        cap = tuple(range(tip_base, tip_base + ring_len))
+        faces.append(cap if mirror else cap[::-1])
+    root_ring = tuple(range(0, ring_len))
+    faces.append(root_ring[::-1] if mirror else root_ring)
+
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate()
+    obj = bpy.data.objects.new(name, mesh)
+    link(obj)
+    obj.data.materials.append(mat)
+    shade(obj, 40)
+    return obj
+
+
+# Main wings — moderate sweep, elliptical taper, 9% thickness, 4 deg dihedral.
+for side, mirror in (("L", True), ("R", False)):
+    build_airfoil_surface(
+        f"Wing_{side}", mat_skin,
+        root_chord=3.4, tip_chord=1.15, span=5.7, sweep=2.05,
+        thickness=0.09, dihedral=4.0, twist=-2.0,
+        root_pos=(0.15 * (-1 if mirror else 1), -0.05, 0.35), mirror=mirror,
+        sections=7,
+    )
+
+# LERX (leading-edge root extensions) — thin, highly swept, blends wing to body.
+for side, mirror in (("L", True), ("R", False)):
+    build_airfoil_surface(
+        f"LERX_{side}", mat_skin,
+        root_chord=3.1, tip_chord=1.5, span=1.05, sweep=1.25,
+        thickness=0.05, dihedral=0.0,
+        root_pos=(0.42 * (-1 if mirror else 1), 0.18, 2.1), mirror=mirror,
+        sections=4, tip_round=False,
+    )
 
 # Canopy
 bpy.ops.mesh.primitive_uv_sphere_add(segments=20, ring_count=10, radius=0.52, location=(0, 0.82, 1.6))
@@ -334,31 +408,36 @@ shade(frame)
 # Spine fairing
 add_box("Spine", (0, 0.55, -0.5), (0.28, 0.22, 4.5), mat_skin, 0.03, 2)
 
-# Twin canted vertical tails
-for side, x in (("L", -0.55), ("R", 0.55)):
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(x, 0.85, -5.6))
-    vtail = bpy.context.active_object
-    vtail.name = f"VTail_{side}"
-    vtail.scale = (0.12, 1.5, 1.35)
-    bpy.ops.object.transform_apply(scale=True)
-    for v in vtail.data.vertices:
-        v.co.x += v.co.z * 0.06 * (1 if x > 0 else -1)
-    vtail.data.materials.append(mat_skin)
-    apply_bevel(vtail, 0.03, 2)
-    shade(vtail)
+# Twin canted vertical tails — built as airfoils lofted along Y (span = height)
+# rather than X, then canted outboard, so the fins get the same rounded leading
+# edge and sharp trailing edge as every other flying surface.
+for side, sgn in (("L", -1), ("R", 1)):
+    fin = build_airfoil_surface(
+        f"VTail_{side}", mat_skin,
+        root_chord=2.5, tip_chord=1.15, span=1.55, sweep=1.0,
+        thickness=0.075, dihedral=0.0,
+        root_pos=(0.0, 0.0, 0.0), mirror=False,
+        sections=5,
+    )
+    # Stand the surface up (span X -> Y), then cant the fin outboard 22 deg.
+    fin.rotation_euler = (0.0, 0.0, math.radians(90))
+    bpy.ops.object.select_all(action="DESELECT")
+    fin.select_set(True)
+    bpy.context.view_layer.objects.active = fin
+    bpy.ops.object.transform_apply(rotation=True)
+    fin.rotation_euler = (0.0, 0.0, math.radians(-22 * sgn))
+    fin.location = (sgn * 0.55, 0.72, -5.35)
 
-# Horizontal stabilizers
-for side, x in (("L", -1.8), ("R", 1.8)):
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(x, 0.35, -6.4))
-    hstab = bpy.context.active_object
-    hstab.name = f"HStab_{side}"
-    hstab.scale = (1.7, 0.09, 0.95)
-    bpy.ops.object.transform_apply(scale=True)
-    for v in hstab.data.vertices:
-        v.co.z -= abs(v.co.x) * 0.08
-    hstab.data.materials.append(mat_skin)
-    apply_bevel(hstab, 0.025, 2)
-    shade(hstab)
+# Horizontal stabilisers — same airfoil treatment as the main wing, with a touch
+# of anhedral (negative dihedral) the way most twin-tail strike aircraft carry.
+for side, mirror in (("L", True), ("R", False)):
+    build_airfoil_surface(
+        f"HStab_{side}", mat_skin,
+        root_chord=1.9, tip_chord=0.72, span=1.75, sweep=0.72,
+        thickness=0.07, dihedral=-6.0,
+        root_pos=(0.35 * (-1 if mirror else 1), 0.35, -6.15), mirror=mirror,
+        sections=5,
+    )
 
 # Side intakes
 build_intake("Intake_L", (-0.82, 0.15, -1.2), mat_skin, mat_dark)
