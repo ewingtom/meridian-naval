@@ -34,10 +34,14 @@ const STATES = {
     tintMix: 0.0,
     sceneFog: 0.00020,
     oceanFog: 0.00082,
-    cloudCoverage: 0.18,
-    cloudiness: 0.95,
-    cloudLit: 0xf4f7fb,
-    cloudShadow: 0x2e3c4c,
+    // Scattered fair-weather cumulus. The rebuilt cloud shader (skyShader.js) now
+    // renders real self-shadowed forms, so "clear" carries a little cloud for depth
+    // and reflections instead of the old empty-blue dome. Higher threshold = fewer,
+    // punchier puffs against blue.
+    cloudCoverage: 0.21,
+    cloudiness: 1.0,
+    cloudLit: 0xfbfaf5,
+    cloudShadow: 0x35455a,
     sunMul: 1.0,
     sunGray: 0.0,
     hemi: 0.16,

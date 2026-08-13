@@ -91,7 +91,11 @@ export class RenderPipeline {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Soft PCF over hard PCF — hull/deck contact shadows in chase/helm views were
+    // reading with a hard stair-stepped edge that telegraphs "real-time shadow map".
+    // Soft filtering costs a few extra taps but is the cheapest single step toward a
+    // photographic shadow.
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.28;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;

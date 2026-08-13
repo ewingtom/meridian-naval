@@ -55,10 +55,31 @@ export const SkyShader = {
       vec2 u = f * f * (3.0 - 2.0 * f);
       return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
     }
+    // Full-detail fbm for the visible cloud silhouette / erosion.
     float fbm(vec2 p) {
       float v = 0.0, amp = 0.52;
-      for (int i = 0; i < 4; i++) { v += amp * noise(p); p *= 2.08; amp *= 0.5; }
+      for (int i = 0; i < 5; i++) { v += amp * noise(p); p = p * 2.03 + vec2(1.7, 9.2); amp *= 0.5; }
       return v;
+    }
+    // Cheap 3-octave fbm reused by the sun light-march taps below (the shadow only
+    // needs the coarse cloud mass, not the fine erosion detail, so paying for 5
+    // octaves per tap would be wasted).
+    float fbm3(vec2 p) {
+      float v = 0.0, amp = 0.5;
+      for (int i = 0; i < 3; i++) { v += amp * noise(p); p = p * 2.02 + vec2(3.1, 1.7); amp *= 0.5; }
+      return v;
+    }
+
+    // Coarse cloud mass with domain warping. The warp is what turns blobby value
+    // noise into billowing cumulus cauliflower shapes — it is the single biggest
+    // difference between "procedural noise" and "clouds". thr is the coverage
+    // threshold (WeatherSystem drives it; lower = cloudier). Reused for both the
+    // displayed shape and the light-march occlusion taps so they agree.
+    float cloudShape(vec2 uv, float thr) {
+      vec2 w = vec2(fbm3(uv * 0.65 + 11.5), fbm3(uv * 0.65 + 27.1));
+      vec2 uw = uv + (w - 0.5) * 2.1;
+      float d = fbm3(uw);
+      return clamp((d - thr) / (1.0 - thr), 0.0, 1.0);
     }
 
     void main() {
@@ -102,32 +123,68 @@ export const SkyShader = {
       float halo = pow(clamp(sunDot, 0.0, 1.0), 9.0) * 0.32;
       vec3 sunContribution = uSunColor * (sunDisc * 14.0 + corona * 5.5 + halo);
 
-      // Cloud layer — flat-plane projection, NOT an (azimuth, elevation) dome UV.
-      // atan(dir.z, dir.x) wraps hard from +PI to -PI along the -X meridian, and since
-      // that azimuth fed the noise U coordinate directly, the sample jumped ~10 units
-      // across that line: a world-locked vertical brightness seam through the sky that
-      // tracked the horizon (the judge-flagged banding artifact). Projecting the view
-      // ray onto a horizontal cloud plane instead is continuous in every direction and
-      // is also the physically right mapping — it gives real perspective foreshortening
-      // toward the horizon rather than uniform dome-stretched noise.
-      float cloudFade = smoothstep(0.0, 0.12, elevation) * (1.0 - smoothstep(0.7, 1.0, elevation));
-      vec2 cuv = (dir.xz / max(elevation, 0.10)) * 0.55 + vec2(uTime * 0.0045, uTime * 0.0012);
-      float base = fbm(cuv);
-      float detail = fbm(cuv * 3.6 + 4.0) * 0.45;
-      float ridge = 1.0 - abs(fbm(cuv * 1.8 + 2.0) * 2.0 - 1.0);
-      float cloudN = base * 0.55 + detail * 0.25 + ridge * 0.2;
-      float cloud = smoothstep(uCloudCoverage, uCloudCoverage + 0.38, cloudN);
-      cloud = pow(cloud, 1.15);
+      // ---- Cloud layer -----------------------------------------------------
+      // Flat-plane projection (dir.xz / elevation), continuous in every direction
+      // and physically the right mapping — it gives real perspective
+      // foreshortening toward the horizon rather than uniform dome-stretched noise.
+      //
+      // The clouds are lit with a fake-volumetric model: a short light-march
+      // toward the sun accumulates cloud mass between each point and the sun, and
+      // Beer's law turns that into a transmittance. That is what gives the cloud
+      // dimensional form — bright tops, shadowed undersides, and a bright rim
+      // (silver lining) where the sun burns through thin edges. All in a single
+      // fragment pass, no 3D volume, so it stays cheap enough for a sky box.
+      float highFade = 1.0 - smoothstep(0.72, 1.0, elevation);
+      float cloudFade = smoothstep(0.008, 0.11, elevation) * highFade;
 
-      vec3 horizDir = normalize(vec3(dir.x, 0.0, dir.z));
-      vec3 horizSun = normalize(vec3(uSunDirection.x, 0.0, uSunDirection.z));
-      float sunFacing = clamp(dot(horizDir, horizSun) * 0.5 + 0.5, 0.0, 1.0);
-      vec3 cloudColor = mix(uCloudColorShadow, uCloudColorLit, pow(sunFacing, 1.6));
-      cloudColor += uSunColor * corona * 0.15;
+      vec2 wind = vec2(uTime * 0.0038, uTime * 0.0011);
+      vec2 cuv = (dir.xz / max(elevation, 0.085)) * 0.5 + wind;
 
-      sky = mix(sky, cloudColor, cloud * cloudFade * uCloudiness);
+      float thr = uCloudCoverage;
+      float shape = cloudShape(cuv, thr);
+      // Erode the edges with fine detail so cloud borders read as wispy/fractal
+      // rather than as a hard noise contour.
+      float detail = fbm(cuv * 3.3 + 6.0);
+      float dens = clamp(shape * 1.3 - detail * (1.0 - shape) * 0.5, 0.0, 1.0);
 
-      vec3 color = sky + sunContribution * (1.0 - cloud * cloudFade * 0.85);
+      // Light march toward the sun's position projected onto the cloud plane. The
+      // taps accumulate cloud mass between this point and the sun; Beer's law turns
+      // that into a transmittance so cloud undersides / far sides go properly grey.
+      vec2 sunPlane = uSunDirection.xz / max(uSunDirection.y, 0.20);
+      vec2 toSun = normalize(sunPlane - cuv);
+      float occ = 0.0;
+      occ += cloudShape(cuv + toSun * 0.13, thr);
+      occ += cloudShape(cuv + toSun * 0.28, thr);
+      occ += cloudShape(cuv + toSun * 0.48, thr);
+      occ += cloudShape(cuv + toSun * 0.74, thr);
+      float light = exp(-occ * 1.35);             // transmittance toward the sun
+      float powder = 1.0 - exp(-dens * 3.0);      // dark cores / bright fluffy edges
+
+      // Shadowed cloud isn't black — it picks up bounced sky light. Mixing a little
+      // of the local sky colour into the shadow keeps undersides from going muddy
+      // while still reading clearly darker than the lit tops.
+      vec3 lit = uCloudColorLit;
+      vec3 shad = mix(uCloudColorShadow, sky * 0.75, 0.35);
+      vec3 cloudColor = mix(shad, lit, light * (0.45 + 0.55 * powder));
+      // Silver lining: looking toward the sun through a thin cloud edge blows out
+      // bright and warm. Peaks where the cloud is lit (high transmittance) and thin.
+      float rim = pow(clamp(sunDot, 0.0, 1.0), 4.0) * light * (1.0 - dens) * 1.8;
+      cloudColor += uSunColor * (rim + corona * 0.12);
+
+      // Crisp alpha ramp: cloud cores read as solid, edges stay fluffy. A soft
+      // linear density made every cloud a translucent smudge that washed into the
+      // bright sky — this is what makes them read as cumulus with real presence.
+      float cloudA = smoothstep(0.04, 0.5, dens) * cloudFade * uCloudiness;
+      sky = mix(sky, cloudColor, cloudA);
+
+      // High, thin cirrus streaks for depth above the cumulus deck — very cheap,
+      // faded out wherever the main deck already covers the sky.
+      vec2 cir = dir.xz / max(elevation, 0.06) * 0.22 + vec2(uTime * 0.0016, uTime * 0.0006);
+      float cirrus = smoothstep(0.52, 0.92, fbm(cir * 1.6))
+        * smoothstep(0.04, 0.28, elevation) * highFade * (1.0 - cloudA);
+      sky = mix(sky, uCloudColorLit * 1.03, cirrus * 0.22 * uCloudiness);
+
+      vec3 color = sky + sunContribution * (1.0 - cloudA * 0.92);
       // Break sky gradient banding (common WebGL 8-bit artifact on large smooth ramps)
       float dither = (hash(gl_FragCoord.xy + uTime * 17.0) - 0.5) * (3.0 / 255.0);
       float horizonBand = (1.0 - smoothstep(0.0, 0.38, elevation));
