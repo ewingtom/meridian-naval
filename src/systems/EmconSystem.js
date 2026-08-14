@@ -81,11 +81,15 @@ export class EmconSystem {
   }
 
   /** How detectable OWN ship is to the enemy right now, as a multiplier on their
-   *  acquisition range. Radiating a big SPY array lights you up; going silent
-   *  drops you toward your passive/physical signature. Never zero — a 9,000-ton
-   *  hull still has an IR/visual/wake signature at close range. */
+   *  acquisition range. This is the "radar paradox" at the heart of Sea Power: a
+   *  radar has to bounce energy off a target and back to see it, but the target's
+   *  ESM only has to hear the outbound pulse — so a radiating ship is detectable on
+   *  passive ESM at very roughly TWICE the range its own radar can see. Radiate and
+   *  they hold you (and salvo you) from far out; run EMCON-silent and their solution
+   *  collapses toward your bare physical/IR signature and they nearly lose you.
+   *  Never zero — a 9,000-ton hull still has a wake and an IR plume up close. */
   ownDetectability() {
-    return this.radarActive ? 1.0 : 0.42;
+    return this.radarActive ? 1.0 : 0.24;
   }
 
   /**

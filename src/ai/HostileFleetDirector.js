@@ -25,12 +25,14 @@ export class HostileFleetDirector {
   _pickTarget(originPos, tf, ctx) {
     let best = null;
     let bestScore = -Infinity;
-    // The player's emissions posture gates how far the enemy can localize Meridian:
-    // radiating a big radar array, they hold you out to ~65 km; run EMCON-silent and
-    // that collapses toward your passive signature (~27 km), so a quiet ship at range
-    // simply drops off their targeting solution and they prosecute a radiating escort
-    // instead. This is what gives the EMCON decision real defensive teeth.
-    const playerAcqRange = 65000 * (ctx.playerDetectability ?? 1);
+    // The player's emissions posture gates how far the enemy can localize Meridian
+    // — the radar paradox (see EmconSystem.ownDetectability). Radiating, they hear
+    // our radar and hold us out to ~95 km, well beyond our own ~40 km radar horizon,
+    // so we get salvoed before we can even see them. EMCON-silent collapses that to
+    // ~23 km (bare signature) — a quiet ship at range simply drops off their firing
+    // solution and they prosecute a radiating escort instead. This asymmetry is what
+    // makes "do I dare turn the radar on?" the central tactical decision.
+    const playerAcqRange = 95000 * (ctx.playerDetectability ?? 1);
     for (const ship of tf) {
       const d = distFlat(originPos, ship.group.position);
       const isPlayer = ship === ctx.playerShip;

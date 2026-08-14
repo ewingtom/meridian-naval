@@ -167,9 +167,11 @@ export class WeaponsSystem {
     this._cooldowns[key] = w.cooldown;
     if (w.ammoKey) this.ammo[w.ammoKey]--;
 
-    this.spawn(w.projType, fromPos, targetPos, { targetEntity });
+    // Return the spawned projectile (truthy — existing callers only test it for
+    // truthiness) so the caller can, e.g., snap the missile-follow camera onto it.
+    const p = this.spawn(w.projType, fromPos, targetPos, { targetEntity });
     this.cb.onFire?.(key);
-    return true;
+    return p;
   }
 
   spawn(type, fromPos, targetPos, opts = {}) {
@@ -418,6 +420,15 @@ export class WeaponsSystem {
           if (!ship.alive) continue;
           const shipHitR = Math.max(p.cfg.radius, (ship.length || ship.physics?.length || 140) * 0.22);
           if (p.position.distanceTo(ship.group.position) < shipHitR) {
+            // Anti-radiation missile: it homes on the ship's RADAR EMISSION. If the
+            // ship went EMCON-silent before terminal, the ARM has lost its source and
+            // goes stupid — it splashes harmlessly instead of hitting. This is what
+            // makes the "blink" (radiate briefly, then go dark) tactic pay off.
+            if (p.isArm && ship._radiating === false) {
+              this.explode(p.position.clone(), { scale: 0.7, underwater: false });
+              p.dead = true;
+              break;
+            }
             const impact = p.position.clone();
             const res = ship.takeDamage(0, { munition: p.type, impactWorld: impact });
             const applied = res?.applied ?? 0;

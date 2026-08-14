@@ -3,6 +3,7 @@ import { RenderPipeline } from './core/renderer.js';
 import { SkySystem } from './core/sky.js';
 import { OceanField } from './core/ocean.js';
 import { CameraRig } from './core/CameraRig.js';
+import { MissileCamera } from './core/MissileCamera.js';
 import { CrewedShip } from './ship/CrewedShip.js';
 import { ShipAutopilot } from './ai/ShipAutopilot.js';
 import { HostileFleetDirector } from './ai/HostileFleetDirector.js';
@@ -95,6 +96,10 @@ islet.group.position.set(-1900, 0, 1000);
 scene.add(islet.group);
 
 const cameraRig = new CameraRig(camera);
+// Sea Power "ride the missile" camera — overrides the station view to chase an
+// outbound weapon to impact, then eases back. See MissileCamera.js.
+const missileCamera = new MissileCamera(camera);
+const _stationPose = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), fov: 50 };
 cameraRig.setImmediate(new THREE.Vector3(0, 20, 30), new THREE.Quaternion());
 
 // ============================== AUDIO ==============================
@@ -182,6 +187,7 @@ const weapons = new WeaponsSystem(scene, {
 });
 weapons.setOcean(ocean);
 let ewWarningUntil = 0;
+let lastArmAt = -999; // last anti-radiation-missile launch time (radar-paradox punish)
 const radar = new RadarSystem({ rangeM: 40000, maxRangeM: 150000, sonarPingRangeM: 12000 });
 // Emissions control + passive ESM — the active/passive sensor duel at the heart
 // of Sea Power. RADIATE = full radar reach but you light up on enemy ESM; EMCON
@@ -232,6 +238,23 @@ function fireHostileWeapon(type, from, targetPos, source) {
 }
 function fireFriendlyWeapon(type, from, targetPos, source, targetEntity) {
   mp.fireAndRelay((t, f, tp, opts) => weapons.spawn(t, f, tp, opts), type, from, targetPos, { sourceEntity: source, targetEntity });
+}
+/** Target proxy for an anti-radiation missile: it tracks the ship's live position
+ *  ONLY while the ship is radiating. The moment the ship goes EMCON-silent the aim
+ *  point freezes at the last-known position — so the ARM flies on to empty water
+ *  and the (now-moved) ship slides out from under it. The blink tactic, made visible. */
+function armProxy(ship) {
+  let frozen = null;
+  return {
+    get position() {
+      if (ship._radiating !== false) { frozen = null; return ship.group.position; }
+      if (!frozen) frozen = ship.group.position.clone();
+      return frozen;
+    },
+    getAimPoint(out) { const p = this.position; return out ? out.copy(p) : p.clone(); },
+    get alive() { return ship.alive !== false; },
+    get id() { return ship.id; },
+  };
 }
 function shipProxy(ship) {
   return {
@@ -916,6 +939,40 @@ ewAlertEl.innerHTML = `
 `;
 document.body.appendChild(ewAlertEl);
 
+// ESM "you are being tracked" cue — the radar paradox made visible. Shows when the
+// ship is radiating AND a hostile has built a firing solution on us (see
+// HostileFleetDirector). Teaches the EMCON decision by showing its consequence.
+const esmAlertEl = document.createElement('div');
+esmAlertEl.style.cssText = `
+  position:fixed; left:50%; top:60px; transform:translateX(-50%);
+  padding:8px 20px; z-index:64; display:none; text-align:center; pointer-events:none;
+  border:1px solid rgba(255,90,90,0.6); background:rgba(24,6,8,0.55);
+  animation:esmpulse 1.1s ease-in-out infinite;
+`;
+esmAlertEl.innerHTML = `
+  <div class="hud-label" style="color:#ff6a6a; font-size:12px; letter-spacing:0.16em;">◤ ESM — OUR RADAR DETECTED ◢</div>
+  <div style="font:11px var(--font-mono); color:var(--c-text); margin-top:3px;">A hostile is tracking our emissions — press <kbd>K</kbd> for EMCON silent</div>
+`;
+document.body.appendChild(esmAlertEl);
+if (!document.getElementById('esmpulse-kf')) {
+  const st = document.createElement('style'); st.id = 'esmpulse-kf';
+  st.textContent = '@keyframes esmpulse{0%,100%{opacity:0.55}50%{opacity:1}}';
+  document.head.appendChild(st);
+}
+let esmTrackedNudged = false;
+
+// Missile-cam banner — shown while riding a weapon to impact (see MissileCamera.js).
+const missileCamHint = document.createElement('div');
+missileCamHint.style.cssText = `
+  position:fixed; left:50%; top:24px; transform:translateX(-50%);
+  padding:7px 16px; z-index:66; display:none; pointer-events:none;
+  font:12px var(--font-mono); letter-spacing:0.14em; color:#ffd27a;
+  background:rgba(6,10,14,0.5); border:1px solid rgba(255,176,46,0.4);
+  text-shadow:0 0 8px rgba(255,176,46,0.5);
+`;
+missileCamHint.innerHTML = 'WEAPON CAMERA — tracking to impact · <kbd style="color:#fff">O</kbd> to return';
+document.body.appendChild(missileCamHint);
+
 // ---- controls intro: shown once per new patrol, on the deck before the mouse is
 // captured, so the player can read it without having to fight pointer lock. Only
 // covers the universal walk-around controls — station-specific ones (throttle/rudder,
@@ -1108,6 +1165,21 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyM') { taskForce.returnToScreen(); audio.playUiConfirm(); }
   else if (e.code === 'KeyY') { taskForce.affirm(); audio.playUiConfirm(); }
   else if (e.code === 'KeyZ') { weapons.deployChaff(localShip); }
+  else if (e.code === 'KeyO') {
+    // Missile-follow camera: ride the newest live outbound missile, or exit if
+    // already riding. Also flips the auto-snap preference so repeated use sticks.
+    if (missileCamera.active) {
+      _stationPose.pos.copy(camera.position);
+      _stationPose.quat.copy(camera.quaternion);
+      _stationPose.fov = camera.fov;
+      missileCamera.cancel(_stationPose);
+    } else {
+      const live = weapons.projectiles.filter((p) => !p.dead && (p.type === 'playerMissile' || p.type === 'playerLacm' || p.type === 'playerSam'));
+      const newest = live[live.length - 1];
+      if (newest) { missileCamera.follow(newest); audio.playUiConfirm(); }
+      else commsLog.push({ speaker: 'WEAPONS', text: 'No missile in flight to track — launch one, then press O to ride it.', urgency: 'normal' });
+    }
+  }
   else if (e.code === 'KeyK') {
     // EMCON toggle — the core Sea Power posture decision.
     const state = emcon.toggle();
@@ -1376,6 +1448,14 @@ function evaluateFireSolution(targetEntity, targetInfo) {
     }
   }
   if (key === 'sam') {
+    // Semi-active homing: the area SAM rides our own fire-control radar all the way
+    // to intercept, so it CANNOT be fired with the radar cold. This is the sharp
+    // edge of the EMCON decision — to defend against an air raid with SAMs you must
+    // go active, which lights you up on their ESM (the radar paradox). Offensive
+    // ASMs/cruise have their own active seekers and fire fine while silent.
+    if (!emcon.radarActive) {
+      return { ok: false, reason: 'RADAR COLD', detail: 'SAM is semi-active — it needs our fire-control radar. Go active (K) to engage air (this reveals us).' };
+    }
     if (!targetEntity || domain !== 'AIR') {
       return { ok: false, reason: 'NO AIR TRACK', detail: 'SAMs need an air track — scan the sky or press G' };
     }
@@ -1596,6 +1676,12 @@ function fireSelectedWeapon() {
   }
 
   const fired = weapons.firePlayerWeapon(from, targetPos, targetEntity || null);
+  // Sea Power "snap to new launch": auto-ride an outbound offensive missile out to
+  // impact. Only for the strike weapons (ASM / cruise) — defensive SAM/CIWS spam
+  // during a raid shouldn't yank the camera off the console. Toggle with O.
+  if (fired && missileCamera.autoSnap && (key === 'missile' || key === 'lacm') && !missileCamera.active) {
+    missileCamera.follow(fired);
+  }
   if (fired && mp.inSession) {
     mp.net.sendWeaponFire({
       type: {
@@ -1618,7 +1704,7 @@ window.GAME = {
   pipeline, sky, ocean, camera, scene, renderer, THREE, ships, localShipId, cameraRig, playerController,
   weapons, radar, world, mission, audio, hud, tacRadar, mainMenu, pauseMenu, settings, commsLog,
   damageVignette, island, islet, stationOverlay, Station, mp, lobby, dynamicOps, taskForce, coopPanel,
-  emcon, hostileFleets,
+  emcon, hostileFleets, missileCamera,
   setEmcon: (s) => emcon.setState(s),
   // ---- Weather debug surface ----
   // window.GAME.setWeather('squall')      -> normal slow cross-fade (40-80s)
@@ -1777,6 +1863,18 @@ function animate() {
   }
   cameraRig.update(dt);
 
+  // Missile-follow override: after the rig has set the live station pose, capture
+  // it and let the missile camera take over (and later ease back onto it). Camera
+  // shake below still applies on top, so a terminal hit still jolts the view.
+  if (missileCamera.active) {
+    _stationPose.pos.copy(camera.position);
+    _stationPose.quat.copy(camera.quaternion);
+    _stationPose.fov = camera.fov;
+    missileCamera.update(dt, _stationPose);
+    if (missileCamera.active) missileCamHint.style.display = 'block';
+    else missileCamHint.style.display = 'none';
+  }
+
   if (shakeMag > 0.001) {
     camera.position.x += (Math.random() - 0.5) * shakeMag;
     camera.position.y += (Math.random() - 0.5) * shakeMag;
@@ -1875,6 +1973,40 @@ function animate() {
     }
     localShipWasBurning = burning;
     ewAlertEl.style.display = performance.now() / 1000 < ewWarningUntil ? 'block' : 'none';
+
+    // Publish own emission state for the ARM hit/miss resolution (WeaponsSystem).
+    ships.player._radiating = emcon.radarActive;
+
+    // Radar-paradox cue: are we radiating AND does any hostile currently hold a
+    // firing solution on Meridian? (HostileFleetDirector stamps _fleet.targetShip.)
+    const beingTracked = emcon.radarActive && world.hostiles.some((h) => h._fleet?.targetShip === ships.player);
+    esmAlertEl.style.display = beingTracked ? 'block' : 'none';
+    if (beingTracked && !esmTrackedNudged) {
+      esmTrackedNudged = true;
+      commsLog.push({ speaker: 'EW', text: 'Threat ESM has our radar — they hold a bearing on us. We can see them, but they can see us from farther. Consider going EMCON silent (K).', urgency: 'warning' });
+    }
+    if (!beingTracked) esmTrackedNudged = false;
+
+    // Anti-radiation missile: a hostile holding our emissions occasionally lets fly
+    // a radar-homing shot at us. Going silent before terminal defeats it (its aim
+    // freezes at last-known via armProxy, and WeaponsSystem's ARM check splashes it
+    // if we're dark). Rewards the "blink" tactic. Rate-limited so it's a punctuating
+    // threat, not a constant barrage.
+    if (beingTracked && elapsed - lastArmAt > 26 && Math.random() < dt * 0.05) {
+      const shooter = world.hostiles.find((h) => h._fleet?.targetShip === ships.player
+        && (String(h.domain).toUpperCase() === 'SURFACE' || String(h.domain).toUpperCase() === 'AIR'));
+      if (shooter) {
+        lastArmAt = elapsed;
+        const from = (shooter.position || shooter.group?.position).clone();
+        from.y = Math.max(from.y || 0, 8);
+        const arm = weapons.spawn('enemyMissile', from, ships.player.group.position.clone(), {
+          sourceEntity: shooter, targetEntity: armProxy(ships.player),
+        });
+        if (arm) arm.isArm = true;
+        commsLog.push({ speaker: 'EW', text: 'ARM INBOUND — anti-radiation missile riding our radar beam. Go EMCON silent (K) to break its lock, or ride it out.', urgency: 'critical' });
+        audio.playAlarmKlaxon?.();
+      }
+    }
 
     // Escorts show up on radar/tactical plot as friendly contacts alongside hostiles —
     // exclude whichever ship the local human is actually standing on (no need for a
