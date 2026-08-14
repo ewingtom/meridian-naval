@@ -158,15 +158,21 @@ export class Explosion {
     this.fireMesh.scale.setScalar(0.1);
     scene.add(this.fireMesh);
 
+    // Opaque hot core — NORMAL (not additive) blending is the point: additive
+    // never reads as solid (it just adds light and washes out over a bright sky),
+    // which is exactly why the fireball looked like a translucent amber smudge with
+    // no dense center. A normal-blended opaque hot ball gives the explosion a real
+    // molten core; the additive fireball above is the glow wrapped around it.
     this.core = new THREE.Mesh(fireballGeo, new THREE.MeshBasicMaterial({
-      color: underwater ? 0xcdf7ff : 0xfff6d8,
+      color: underwater ? 0xcdf7ff : 0xffcf7a,
       transparent: true,
       opacity: 1,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
     }));
     this.core.position.copy(position);
     this.core.scale.setScalar(0.05);
+    this.core.renderOrder = 3; // draw over the additive fireball glow
     scene.add(this.core);
 
     this.light = new THREE.PointLight(
@@ -244,9 +250,11 @@ export class Explosion {
       // while a small hit stays a modest puff. Staggered initial heights + a
       // dark-base/lighter-top gradient make the sprites read as one rising plume
       // rather than a flat cluster.
-      const smokeCount = Math.round(THREE.MathUtils.clamp(3 + scale * 2.4, 3, 11));
-      const baseCol = new THREE.Color(0x24221f);
-      const topCol = new THREE.Color(0x6d6a63);
+      // More, denser puffs so a big hit reads as thick billowing smoke, not a thin
+      // wispy trail (judge finding). Darker sooty base.
+      const smokeCount = Math.round(THREE.MathUtils.clamp(4 + scale * 4.0, 4, 18));
+      const baseCol = new THREE.Color(0x16140f);
+      const topCol = new THREE.Color(0x615d54);
       for (let i = 0; i < smokeCount; i++) {
         const t = i / Math.max(1, smokeCount - 1); // 0 at base, 1 at top
         const mat = new THREE.SpriteMaterial({
@@ -286,8 +294,12 @@ export class Explosion {
       this.fireMat.uniforms.uProgress.value = ft;
       this.fireMesh.visible = true;
 
-      this.core.scale.setScalar(THREE.MathUtils.lerp(0.3, 3.8, Math.min(1, ft * 4)) * this.scale);
-      this.core.material.opacity = Math.max(0, 1 - ft * 3);
+      // Solid molten core: grows fast to a dense mass then fades over the first
+      // third of the fireball's life (slower than before, so it reads as a real
+      // burning core rather than a one-frame flash), shading hot-white -> orange.
+      this.core.scale.setScalar(THREE.MathUtils.lerp(0.35, 4.6, Math.min(1, ft * 3.2)) * this.scale);
+      this.core.material.opacity = Math.max(0, 1 - ft * 2.2);
+      this.core.material.color.setRGB(1.0, 0.72 - ft * 0.35, 0.38 - ft * 0.3);
       this.core.visible = true;
 
       this.light.intensity = 55 * this.scale * (1 - ft);
@@ -332,7 +344,7 @@ export class Explosion {
         );
         const sc = THREE.MathUtils.lerp(2.0, 12, pt) * this.scale;
         sprite.scale.setScalar(sc);
-        mat.opacity = Math.sin(pt * Math.PI) * 0.5;
+        mat.opacity = Math.sin(pt * Math.PI) * 0.78;
       }
     }
   }
