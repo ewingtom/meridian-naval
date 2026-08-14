@@ -30,7 +30,11 @@ export class SkySystem {
     // Key sun light — warm, low-ish for long dramatic shadows / glitter
     this.sunLight = new THREE.DirectionalLight(0xfff2e0, 5.1);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.set(2048, 2048);
+    // 1536² instead of 2048² — the shadow pass re-renders every shadow-casting
+    // mesh (hundreds, across the task force) into this map each frame, and 1536
+    // still resolves crisp deck/superstructure shadows at ~44% less shadow-map
+    // fill than 2048.
+    this.sunLight.shadow.mapSize.set(1536, 1536);
     this.sunLight.shadow.camera.near = 40;
     this.sunLight.shadow.camera.far = 900;
     // Tight ortho frustum around the hero — a ±360m box wasted texels and left deck
@@ -128,8 +132,14 @@ export class SkySystem {
     const dist = 400;
     this.sunLight.position.copy(this.sunPosition).multiplyScalar(dist).add(anchor);
 
-    // Refresh PMREM occasionally so water/hull env reflections track cloud motion
-    if (elapsed - this._lastEnvRefresh > 2.5) {
+    // Refresh PMREM only occasionally so water/hull env reflections track slow
+    // cloud/sun change. Each refresh renders the sky to a cubemap and runs the
+    // full PMREM convolution (plus a render-target realloc) — a ~hundreds-of-ms
+    // GPU hitch — so doing it every 2.5 s produced a periodic stutter. The env
+    // barely changes over a patrol (sun is fixed; low-roughness reflections are
+    // near-insensitive to cloud drift), so a 15 s cadence keeps the reflections
+    // fresh enough while cutting the hitch frequency 6×.
+    if (elapsed - this._lastEnvRefresh > 15) {
       this._lastEnvRefresh = elapsed;
       this.updateEnvMap();
       this.onEnvMapUpdated?.(this.envRT.texture);

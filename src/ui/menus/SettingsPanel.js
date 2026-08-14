@@ -40,7 +40,12 @@ const DEFAULTS = {
   musicVolume: 70,
   sfxVolume: 85,
   mouseSensitivity: 50,
-  graphicsQuality: 'high',
+  // Default to 'medium' — the smoothness tier (no SSAO, 1.25 pixel ratio) the
+  // renderer is designed around. 'high'/'ultra' opt into SSAO + higher super-
+  // sampling for players who want the eye-candy and have the GPU headroom.
+  // Shipping 'high' by default put SSAO + a 1.65 pixel ratio on every player who
+  // never opens Settings, which was the reported source of choppy framerates.
+  graphicsQuality: 'medium',
   invertY: false,
 };
 

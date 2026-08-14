@@ -172,11 +172,15 @@ export class RenderPipeline {
   setQuality(q) {
     this._quality = q;
     const dpr = window.devicePixelRatio || 1;
+    // The entire post stack (SSAO, bloom, grade, FXAA) plus the dense ocean shader
+    // renders at this pixel ratio, so on a Retina panel a cap of 1.65 was pushing
+    // ~2.5 M shaded pixels/frame and dominating frame time. Trimmed the caps: the
+    // extra super-sampling was a small crispness gain for a large fill-rate cost.
     const caps = {
       low: 1,
-      medium: Math.min(1.5, dpr),
-      high: Math.min(1.65, dpr),
-      ultra: Math.min(1.85, dpr),
+      medium: Math.min(1.25, dpr),
+      high: Math.min(1.4, dpr),
+      ultra: Math.min(1.6, dpr),
     };
     const pr = caps[q] ?? caps.medium;
     this.renderer.setPixelRatio(pr);
@@ -232,7 +236,11 @@ export class RenderPipeline {
     }
 
     if (this._sunLight) {
-      const map = q === 'ultra' ? 4096 : q === 'high' ? 3072 : q === 'medium' ? 2048 : 512;
+      // Shadow-map resolution per tier. These were 4096/3072/2048 — a 4096² map is
+      // 16 M texels re-rendered over every shadow-caster each frame, a large steady
+      // GPU cost for shadow detail few players notice on a fast-moving warship.
+      // Halved-ish: crisp enough for deck/superstructure contact shadows, far cheaper.
+      const map = q === 'ultra' ? 2560 : q === 'high' ? 2048 : q === 'medium' ? 1536 : 512;
       if (this._sunLight.shadow.mapSize.x !== map) {
         this._sunLight.shadow.mapSize.set(map, map);
         this._sunLight.shadow.map?.dispose();

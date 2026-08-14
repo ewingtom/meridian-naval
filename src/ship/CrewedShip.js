@@ -610,7 +610,38 @@ export class CrewedShip {
   /** Fire-control state: false = firepower kill, this ship cannot engage. */
   get weaponsOnline() { return this.damage.weaponsOnline; }
 
+  /** Drop tiny greeble meshes (rails, stanchions, antennas, wires) from the shadow
+   *  pass — each still re-renders into the shadow map every frame yet casts a shadow
+   *  too fine to read, so together they roughly double the ship's shadow cost for no
+   *  visible gain. Uses WORLD-space bounding boxes, so it must run after the model has
+   *  loaded and the group is scaled/placed (hence lazily, on the first update below,
+   *  rather than mid-load when the transforms aren't final yet). Idempotent. */
+  optimizeShadows() {
+    if (this._shadowOptimized) return;
+    const box = new THREE.Box3();
+    const sz = new THREE.Vector3();
+    let culled = 0, kept = 0;
+    this.group.updateMatrixWorld(true);
+    this.group.traverse((o) => {
+      if (!o.isMesh || !o.castShadow) return;
+      box.setFromObject(o);
+      if (box.isEmpty()) return;
+      box.getSize(sz);
+      const dims = [sz.x, sz.y, sz.z].sort((a, b) => a - b);
+      // Thin in its two smallest axes => a wire/rail/antenna: cull. Chunky in at
+      // least two axes (hull, superstructure, turret, mast, deckhouse): keep.
+      if (dims[1] < 0.6) { o.castShadow = false; culled++; } else kept++;
+    });
+    // Only latch as done once the real model is in (the instant placeholder has a
+    // handful of meshes; wait for the full hull so we don't cull the wrong set).
+    if (culled + kept > 40) this._shadowOptimized = true;
+  }
+
   update(dt, elapsed, getWaveHeight) {
+    // First frames after the async hull swaps in: prune greeble shadow-casters once
+    // the ship is fully placed in world space.
+    if (!this._shadowOptimized) this.optimizeShadows();
+
     if (this.networked && this._netTarget) {
       // Replicated ship: ease toward the last received network transform instead of
       // stepping local physics, so it doesn't fight the authoritative client's motion.
