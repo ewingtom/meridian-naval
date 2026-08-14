@@ -22,26 +22,31 @@ export class WorldManager {
 
   spawnWave(name, aroundPos) {
     if (name === 'wave1') {
-      // Surface action group: lead DDG + wing FFG, shared patrol axis.
-      const base = aroundPos.clone().add(new THREE.Vector3(420, 0, 240));
+      // Surface action group: lead DDG + wing FFG, shared patrol axis. Spawned
+      // over the horizon (~38 km) — first seen as an ESM emitter cut and a distant
+      // radar contact, closing to salvo range, not appearing already in a brawl.
+      const base = aroundPos.clone().add(new THREE.Vector3(32000, 0, 20000));
       const lead = new EnemyShip({
         name: 'Master 1 (DDG)',
         position: base,
-        patrolPoints: [base.clone(), base.clone().add(new THREE.Vector3(700, 0, -280))],
+        patrolPoints: [base.clone(), base.clone().add(new THREE.Vector3(7000, 0, -2800))],
         scene: this.scene,
         shipClass: 'destroyer',
       });
       const wing = new EnemyShip({
         name: 'Master 2 (FFG)',
-        position: base.clone().add(new THREE.Vector3(180, 0, -120)),
-        patrolPoints: [base.clone().add(new THREE.Vector3(180, 0, -120)), base.clone().add(new THREE.Vector3(780, 0, -360))],
+        position: base.clone().add(new THREE.Vector3(2400, 0, -1600)),
+        patrolPoints: [base.clone().add(new THREE.Vector3(2400, 0, -1600)), base.clone().add(new THREE.Vector3(9000, 0, -4200))],
         scene: this.scene,
       });
       this.entities.push(lead, wing);
     } else if (name === 'sub1' || name === 'sub_roamer') {
+      // Subs work in closer than surface/air threats (~14-24 km) — they have to
+      // penetrate the screen to reach torpedo range, and the ASW problem is a
+      // localization hunt, not a long-range spot.
       const off = name === 'sub_roamer'
-        ? new THREE.Vector3((Math.random() - 0.5) * 900, 0, 350 + Math.random() * 700)
-        : new THREE.Vector3(-300, 0, 500);
+        ? new THREE.Vector3((Math.random() - 0.5) * 14000, 0, 14000 + Math.random() * 10000)
+        : new THREE.Vector3(-9000, 0, 16000);
       const p = aroundPos.clone().add(off);
       this.entities.push(new Submarine({
         name: `Sierra-${1 + Math.floor(Math.random() * 9)}`,
@@ -49,18 +54,21 @@ export class WorldManager {
         scene: this.scene,
       }));
     } else if (name === 'airWave' || name === 'air_probe') {
+      // Strike aircraft ingress from stand-off range (~70-95 km), detected far out
+      // on radar (high radar horizon) and engaged with area SAMs before they reach
+      // their own ASM launch point.
       const n = name === 'air_probe' ? 2 : 3;
       for (let i = 0; i < n; i++) {
-        const p = aroundPos.clone().add(new THREE.Vector3(-1500 + i * 220 + Math.random() * 100, 0, -1600 - i * 160));
+        const p = aroundPos.clone().add(new THREE.Vector3(-58000 + i * 5000 + Math.random() * 3000, 0, -74000 - i * 5000));
         this.entities.push(new Aircraft({ name: `Bandit ${String.fromCharCode(65 + i)}`, position: p, scene: this.scene }));
       }
     } else if (name === 'patrol_pair' || name === 'fleet_probe') {
       for (let i = 0; i < 2; i++) {
-        const p = aroundPos.clone().add(new THREE.Vector3(280 + i * 180 + Math.random() * 120, 0, 160 + i * 90));
+        const p = aroundPos.clone().add(new THREE.Vector3(28000 + i * 6000 + Math.random() * 4000, 0, 16000 + i * 5000));
         this.entities.push(new EnemyShip({
           name: `Master ${2 + this.entities.length} (DDG)`,
           position: p,
-          patrolPoints: [p.clone(), p.clone().add(new THREE.Vector3(500, 0, -280 + i * 40))],
+          patrolPoints: [p.clone(), p.clone().add(new THREE.Vector3(6000, 0, -3200 + i * 800))],
           scene: this.scene,
           shipClass: 'destroyer',
         }));
@@ -68,11 +76,11 @@ export class WorldManager {
     } else if (name === 'combined_strike') {
       // Coordinated package: surface pair + air raid on staggered axes.
       this.spawnWave('fleet_probe', aroundPos);
-      this.spawnWave('air_probe', aroundPos.clone().add(new THREE.Vector3(-400, 0, -200)));
+      this.spawnWave('air_probe', aroundPos.clone().add(new THREE.Vector3(-14000, 0, -8000)));
     } else if (name === 'asw_alert') {
       this.spawnWave('sub_roamer', aroundPos);
       // Decoy surface contact so ASW isn't the only plot noise.
-      if (Math.random() < 0.45) this.spawnWave('patrol_pair', aroundPos.clone().add(new THREE.Vector3(600, 0, 200)));
+      if (Math.random() < 0.45) this.spawnWave('patrol_pair', aroundPos.clone().add(new THREE.Vector3(18000, 0, 8000)));
     } else if (name === 'ambiguous_inbound') {
       // The one scenario in this game explicitly grounded in a documented real
       // failure mode (see the research brief this was built from: a 1988

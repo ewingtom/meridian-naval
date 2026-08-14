@@ -20,7 +20,10 @@ const _q = new THREE.Quaternion();
  */
 const TYPE_CONFIG = {
   playerShell: {
-    speed: 340, homing: 0, gravity: 9.8, life: 8, damage: 18, radius: 12,
+    // 130mm naval gun — a ~13 km ballistic last-ditch weapon (see ShipBrain
+    // ENVELOPE.gunMax). Higher muzzle velocity + longer life so the arc actually
+    // carries to that range instead of the old ~2.7 km lob.
+    speed: 420, homing: 0, gravity: 9.8, life: 46, damage: 18, radius: 12,
     color: 0xfff2b0, size: 0.4, trail: true, mesh: 'shell',
   },
   ciwsRound: {
@@ -29,52 +32,67 @@ const TYPE_CONFIG = {
     speed: 1120, homing: 0, gravity: 0, life: 2.5, damage: 6, radius: 8,
     color: 0xffe98a, size: 0.15, trail: false, mesh: 'shell', invisible: true,
   },
+  // Harpoon-class anti-ship missile. Subsonic sea-skimmer (~Mach 0.85); the long
+  // `life` is what makes it an over-the-horizon weapon — a shot to ENVELOPE.asmMax
+  // (~45 km) now flies for ~2.7 minutes, so launching a salvo and then waiting out
+  // its flight while you defend against the counter-salvo is the core rhythm,
+  // exactly as in Sea Power. Was speed 260 / life 26 (~6.8 km, ~20 s).
   playerMissile: {
-    speed: 260, homing: 2.4, gravity: 0, life: 26, damage: 65, radius: 28,
+    speed: 285, homing: 2.4, gravity: 0, life: 185, damage: 65, radius: 28,
     color: 0xdfe8ee, size: 2.4, trail: true, smoke: true, mesh: 'missile',
     boost: true, seaSkim: 9,
     asm: { vls: true, skimAlt: 9, popup: true, booster: true },
   },
-  // SM-2-class area air defense — high loft, hard-turning intercept, no sea-skim.
+  // SM-2-class area air defense — Mach 3+, high loft, hard-turning intercept, no
+  // sea-skim. Reaches ENVELOPE.samMax (~40 km) in ~40 s, so it can kill inbound
+  // raids far out on the plot before they reach terminal defense.
   playerSam: {
-    speed: 620, homing: 3.6, gravity: 0, life: 18, damage: 40, radius: 18,
+    speed: 1000, homing: 3.6, gravity: 0, life: 55, damage: 40, radius: 18,
     color: 0xb8e8ff, size: 2.0, trail: true, smoke: true, mesh: 'missile',
     boost: true,
     sam: { vls: true, booster: true },
   },
-  // Tomahawk-class land-attack cruise missile — high cruise, steep terminal dive.
+  // Tomahawk-class land-attack cruise missile — long-endurance cruise, steep
+  // terminal dive. Life scaled for a genuinely deep-strike reach (~65 km here).
   playerLacm: {
-    speed: 220, homing: 1.6, gravity: 0, life: 55, damage: 90, radius: 36,
+    speed: 240, homing: 1.6, gravity: 0, life: 300, damage: 90, radius: 36,
     color: 0xc8d0b8, size: 2.6, trail: true, smoke: true, mesh: 'missile',
     boost: true,
     asm: { vls: true, landAttack: true, skimAlt: 90, popup: false, booster: true, terminalRange: 380 },
   },
+  // ASROC — rocket lofts the lightweight torpedo out to ~10 km, then it swims.
+  // Long life so the swim phase can actually close a distant submerged contact.
   playerTorpedo: {
-    speed: 55, homing: 1.6, gravity: 0, life: 25, damage: 90, radius: 18,
+    speed: 55, homing: 1.6, gravity: 0, life: 190, damage: 90, radius: 18,
     color: 0x88b8c0, size: 0.7, trail: true, underwater: true, smoke: true,
     mesh: 'torpedo', boost: true, asroc: true, loftBoost: 55,
   },
   drone: {
-    speed: 40, homing: 3, gravity: 0, life: 60, damage: 0, radius: 30,
+    speed: 40, homing: 3, gravity: 0, life: 320, damage: 0, radius: 30,
     color: 0x9fd8ff, size: 0.5, trail: false, mesh: 'drone', isDrone: true,
   },
   enemyShell: {
     speed: 300, homing: 0, gravity: 9.8, life: 8, damage: 14, radius: 12,
     color: 0xff8a5a, size: 0.4, trail: true, mesh: 'shell',
   },
+  // Inbound enemy anti-ship missile — the vampire. Long life so a hostile SAG can
+  // salvo from over the horizon (~40 km) and the missiles cross the gap over
+  // minutes, giving the player the "inbound, time to intercept" defense window.
   enemyMissile: {
-    speed: 230, homing: 2.0, gravity: 0, life: 30, damage: 55, radius: 28,
+    speed: 255, homing: 2.0, gravity: 0, life: 190, damage: 55, radius: 28,
     color: 0xff5a3c, size: 2.2, trail: true, smoke: true, mesh: 'missile',
     boost: true, seaSkim: 8, inbound: true,
     asm: { vls: false, skimAlt: 8, popup: false, booster: true, launchElevation: 0.30 },
   },
   torpedo: {
-    speed: 45, homing: 1.4, gravity: 0, life: 30, damage: 80, radius: 18,
+    speed: 45, homing: 1.4, gravity: 0, life: 200, damage: 80, radius: 18,
     color: 0xff5a3c, size: 0.7, trail: true, underwater: true, smoke: true,
     mesh: 'torpedo', inbound: true,
   },
+  // Air-launched anti-ship missile from a hostile strike aircraft, fired from
+  // stand-off range. Long life to cross the stand-off gap.
   airMissile: {
-    speed: 200, homing: 2.6, gravity: 0, life: 22, damage: 50, radius: 24,
+    speed: 240, homing: 2.6, gravity: 0, life: 160, damage: 50, radius: 24,
     color: 0xff5a3c, size: 1.8, trail: true, smoke: true, mesh: 'missile',
     boost: true, seaSkim: 14, inbound: true,
     asm: { vls: false, skimAlt: 14, popup: false, booster: false, launchElevation: -0.12 },

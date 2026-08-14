@@ -1086,6 +1086,12 @@
   color: var(--ag-doctrine);
   text-shadow: 0 0 8px rgba(255, 176, 46, 0.5);
 }
+/* EMCON SILENT — reads cool/quiet (you're dark), vs the warm amber of an active
+   posture, so the current emissions state is legible at a glance. */
+.aegis-doctrine-value.is-silent {
+  color: var(--ag-friend);
+  text-shadow: 0 0 8px rgba(77, 232, 255, 0.45);
+}
 .aegis-doctrine-sep {
   width: 1px;
   align-self: stretch;

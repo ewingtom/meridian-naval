@@ -10,6 +10,7 @@ import { MultiplayerSession } from './net/MultiplayerSession.js';
 import { PlayerController, Station, STATION_DEFS } from './player/PlayerController.js';
 import { WeaponsSystem } from './weapons/WeaponsSystem.js';
 import { RadarSystem } from './systems/RadarSystem.js';
+import { EmconSystem } from './systems/EmconSystem.js';
 import { MissionSystem } from './systems/MissionSystem.js';
 import { DynamicOps } from './systems/DynamicOps.js';
 import { WeatherSystem, WEATHER_STATES } from './systems/WeatherSystem.js';
@@ -181,7 +182,12 @@ const weapons = new WeaponsSystem(scene, {
 });
 weapons.setOcean(ocean);
 let ewWarningUntil = 0;
-const radar = new RadarSystem({ rangeM: 6000, sonarPingRangeM: 2400 });
+const radar = new RadarSystem({ rangeM: 40000, maxRangeM: 150000, sonarPingRangeM: 12000 });
+// Emissions control + passive ESM — the active/passive sensor duel at the heart
+// of Sea Power. RADIATE = full radar reach but you light up on enemy ESM; EMCON
+// SILENT = radar cold (short passive EO/IR bubble only) but you're hard to find,
+// with the long-range picture coming from ESM bearing cuts on enemy emitters.
+const emcon = new EmconSystem();
 const world = new WorldManager(scene, weapons);
 const mission = new MissionSystem({
   onComms: (line) => { commsLog.push(line); audio.playRadioBlip(); },
@@ -297,7 +303,11 @@ stationOverlay.mount(uiRoot);
 // Helm/radar station control state (shared with the seated-station input handler).
 let headingHold = false;
 let radarFilter = 'ALL';
-const RADAR_RANGES = [3000, 4500, 6000, 8000, 12000];
+// Display-zoom presets for the tactical scope, in metres — Sea-Power scale so the
+// plot can frame an over-the-horizon engagement (out to 150 km) as well as zoom
+// in to the terminal knife-fight. This is a DISPLAY zoom only; detection reach is
+// RadarSystem.maxRangeM / radar horizon, independent of where the scope is set.
+const RADAR_RANGES = [8000, 20000, 40000, 80000, 150000];
 let radarRangeIdx = 2;
 radar.rangeM = RADAR_RANGES[radarRangeIdx];
 
@@ -1098,6 +1108,14 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyM') { taskForce.returnToScreen(); audio.playUiConfirm(); }
   else if (e.code === 'KeyY') { taskForce.affirm(); audio.playUiConfirm(); }
   else if (e.code === 'KeyZ') { weapons.deployChaff(localShip); }
+  else if (e.code === 'KeyK') {
+    // EMCON toggle — the core Sea Power posture decision.
+    const state = emcon.toggle();
+    audio.playUiConfirm();
+    commsLog.push(emcon.radarActive
+      ? { speaker: 'EW', text: 'Radar RADIATING — full sensor picture, but we are detectable on their ESM. Expect to be localized.', urgency: 'warning' }
+      : { speaker: 'EW', text: 'EMCON set — radar cold. Running on passive ESM and datalink. We are hard to find, but blind past visual range.', urgency: 'normal' });
+  }
 });
 
 // ---- station-specific inputs: each console owns a distinct control set ----
@@ -1600,6 +1618,8 @@ window.GAME = {
   pipeline, sky, ocean, camera, scene, renderer, THREE, ships, localShipId, cameraRig, playerController,
   weapons, radar, world, mission, audio, hud, tacRadar, mainMenu, pauseMenu, settings, commsLog,
   damageVignette, island, islet, stationOverlay, Station, mp, lobby, dynamicOps, taskForce, coopPanel,
+  emcon, hostileFleets,
+  setEmcon: (s) => emcon.setState(s),
   // ---- Weather debug surface ----
   // window.GAME.setWeather('squall')      -> normal slow cross-fade (40-80s)
   // window.GAME.setWeather('squall', 0)   -> instant, for deterministic screenshots
@@ -1788,6 +1808,9 @@ function animate() {
       hostiles: world.hostiles,
       taskForce: Object.values(ships).filter((s) => s.alive !== false),
       playerShip: ships.player,
+      // EMCON posture drives how far the enemy can localize Meridian specifically —
+      // radiate and they hold you far out, run silent and you fade off their solution.
+      playerDetectability: emcon.ownDetectability(),
       dt,
     });
     world.update(dt, {
@@ -1866,7 +1889,37 @@ function animate() {
         .filter((s) => s !== localShip && s.alive !== false && !s.destroyed && s.group)
         .map((s) => s.group.position),
     ];
-    lastContacts = radar.buildContacts(radarOrigins, radarSources, weapons.selectedTargetId);
+    lastContacts = radar.buildContacts(radarOrigins, radarSources, weapons.selectedTargetId, { radarActive: emcon.radarActive });
+
+    // Passive ESM layer: bearing cuts on any radiating contact beyond what active
+    // radar has firmly resolved. These are the long-range "something's out there"
+    // tracks that precede a firm radar picture in Sea Power — deliberately
+    // range-imprecise (a fuzzed estimate off signal strength, not a fix) and
+    // flagged esm:true so the plot can render them as unresolved bearing contacts
+    // that the ID loop then works. A contact already held firmly on radar is not
+    // duplicated as an ESM cut.
+    const firmIds = new Set(lastContacts.map((c) => c.id));
+    const esmCuts = emcon.esmTracks(localShip.group.position, radarSources);
+    for (const t of esmCuts) {
+      if (firmIds.has(t.id)) continue;
+      const brg = (t.bearingDeg * Math.PI) / 180;
+      // ESM knows bearing well, range poorly — fuzz the estimate ±18%.
+      const rng = t.distEstM * (0.82 + Math.random() * 0.36);
+      lastContacts.push({
+        id: `esm:${t.id}`,
+        esmOfId: t.id,
+        x: Math.sin(brg) * rng,
+        z: Math.cos(brg) * rng,
+        domain: t.domain,
+        iff: 'UNKNOWN',
+        name: `ESM ${String(Math.round(t.bearingDeg)).padStart(3, '0')}°`,
+        selected: false,
+        distanceM: Math.round(rng),
+        esm: true,
+        band: t.band,
+        bearingDeg: t.bearingDeg,
+      });
+    }
 
     // Patrol station / formation as a persistent nav mark on the plot + HUD.
     if (nav) {
@@ -2053,9 +2106,14 @@ function animate() {
           z: c.z,
           distanceM: Math.hypot(c.x, c.z),
           isWaypoint: !!c.isWaypoint,
+          // Passive-ESM bearing cut (unresolved emitter beyond firm radar range).
+          esm: !!c.esm,
+          band: c.band,
         })),
         selectedTargetId: weapons.selectedTargetId,
         filter: radarFilter,
+        emcon: emcon.state,
+        radarActive: emcon.radarActive,
         rangeM: radar.rangeM,
         navWaypoint: nav,
         lookoutZoom: playerController.lookoutZoom,

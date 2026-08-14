@@ -25,12 +25,23 @@ export class HostileFleetDirector {
   _pickTarget(originPos, tf, ctx) {
     let best = null;
     let bestScore = -Infinity;
+    // The player's emissions posture gates how far the enemy can localize Meridian:
+    // radiating a big radar array, they hold you out to ~65 km; run EMCON-silent and
+    // that collapses toward your passive signature (~27 km), so a quiet ship at range
+    // simply drops off their targeting solution and they prosecute a radiating escort
+    // instead. This is what gives the EMCON decision real defensive teeth.
+    const playerAcqRange = 65000 * (ctx.playerDetectability ?? 1);
     for (const ship of tf) {
       const d = distFlat(originPos, ship.group.position);
-      let score = 8000 - d;
-      if (ship.damage?.fire > 0.1) score += 600;
-      if (ship.damage?.structurePct < 0.7) score += 400;
-      if (ship === ctx.playerShip) score += 250; // prefer Meridian slightly
+      const isPlayer = ship === ctx.playerShip;
+      const acqRange = isPlayer ? playerAcqRange : 60000;
+      if (d > acqRange) continue; // can't build a firing solution on this hull from here
+      // Base scaled for over-the-horizon ranges so the nearest holdable hull still
+      // wins cleanly at tens of km.
+      let score = 90000 - d;
+      if (ship.damage?.fire > 0.1) score += 6000;
+      if (ship.damage?.structurePct < 0.7) score += 4000;
+      if (isPlayer) score += 2500; // prefer Meridian slightly, when they can hold her
       if (score > bestScore) { bestScore = score; best = ship; }
     }
     return best;

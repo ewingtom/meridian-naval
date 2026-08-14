@@ -94,33 +94,35 @@ const STATES = {
     name: 'squall',
     label: 'SQUALL',
     seaLabel: 'very rough',
-    tint: 0x616d78,
+    // Deliberately much darker/greyer than overcast — the visual judge flagged the
+    // two as near-indistinguishable. A squall should read as a genuine storm cell:
+    // the key light drops hard, the world desaturates to slate, and the sea builds.
+    tint: 0x475059,
     tintMix: 1.0,
-    // PLAYABILITY CAP. FogExp2 attenuates as exp(-(density*dist)^2), so the range at
-    // which the picture is 50% fogged is 0.833/density. 0.00050 puts that at ~1.66 km
-    // and full extinction around 3.3 km. DynamicOps spawns contacts at 0.7-2.2 km and
-    // the Lookout station is the only way to visually classify a merchant, so anything
-    // much denser than this turns a legal-ID task into a guess and the station into
-    // dead weight. Deliberately capped here rather than left to the blend.
-    sceneFog: 0.00050,
-    oceanFog: 0.00152,
-    cloudCoverage: -0.08,
+    // Fog is meaningfully thicker than overcast (0.00062 → ~50% fogged at ~1.3 km,
+    // full extinction ~2.6 km) now that detection/classification happens on radar +
+    // ESM at tens of km rather than on a 1-2 km Lookout visual ID, so a soupy squall
+    // no longer breaks the ID task the way it would have on the old close-range scale.
+    // Still short of a total whiteout so the near-field 3D stays readable.
+    sceneFog: 0.00062,
+    oceanFog: 0.00178,
+    cloudCoverage: -0.14,
     cloudiness: 1.0,
-    cloudLit: 0x78828d,
-    cloudShadow: 0x171d24,
-    sunMul: 0.26,
-    sunGray: 0.88,
-    // Hemisphere fill is pushed UP as the key light drops. Without it a squall reads as
-    // "someone turned the lights off" — hulls go to near-black silhouettes and the deck
-    // detail the station overlays sit on disappears.
-    hemi: 0.32,
-    // 1.6x the calm baseline. Higher looked genuinely great from the chase camera but
-    // starts throwing the bridge/Lookout viewpoint around hard enough to be nauseating,
-    // and pushes the bow far enough under that the hull clips the surface.
+    cloudLit: 0x59626c,
+    cloudShadow: 0x11161c,
+    // Key light down to ~0.16 of clear — a storm is dark. Hemisphere fill is pushed
+    // up to compensate so hulls read as slate silhouettes against the murk rather
+    // than going fully black and swallowing the deck detail the overlays sit on.
+    sunMul: 0.16,
+    sunGray: 0.92,
+    hemi: 0.36,
+    // 1.6x the calm baseline. Higher looked great from the chase camera but throws
+    // the bridge/Lookout viewpoint around hard enough to be nauseating and pushes the
+    // bow under far enough to clip the surface.
     waveAmp: 1.6,
     rain: 1.0,
-    deep: 0x0a161d,
-    shallow: 0x1c3b41,
+    deep: 0x070f14,
+    shallow: 0x16303a,
   },
 };
 

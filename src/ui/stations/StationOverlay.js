@@ -443,6 +443,9 @@ export class StationOverlay {
               <span class="aegis-doctrine-sep"></span>
               <span class="aegis-doctrine-label">DESIGNATED TRACK</span>
               <span class="aegis-doctrine-value" data-aeg="designated">NONE</span>
+              <span class="aegis-doctrine-sep"></span>
+              <span class="aegis-doctrine-label">EMCON <kbd>K</kbd></span>
+              <span class="aegis-doctrine-value" data-aeg="emcon">RADIATE</span>
             </div>
             <div class="aegis-chartwrap">
               <canvas class="aegis-canvas"></canvas>
@@ -571,6 +574,7 @@ export class StationOverlay {
       detail: this.root.querySelector('[data-aeg="detail"]'),
       doctrine: this.root.querySelector('[data-aeg="doctrine"]'),
       designated: this.root.querySelector('[data-aeg="designated"]'),
+      emcon: this.root.querySelector('[data-aeg="emcon"]'),
       ping: this.root.querySelector('[data-aeg="ping"]'),
     };
     this._aegCtx = this._aeg.canvas.getContext('2d');
@@ -902,6 +906,11 @@ export class StationOverlay {
     const policyLabel = st.weaponsPolicy === 'free' ? 'FREE' : st.weaponsPolicy === 'tight' ? 'TIGHT' : 'HOLD';
     if (this._aeg.doctrine) this._aeg.doctrine.textContent = policyLabel;
     if (this._aeg.designated) this._aeg.designated.textContent = st.sharedName || 'NONE';
+    if (this._aeg.emcon) {
+      const radiating = s.radarActive !== false;
+      this._aeg.emcon.textContent = radiating ? 'RADIATE' : 'SILENT';
+      this._aeg.emcon.classList.toggle('is-silent', !radiating);
+    }
     if (this._aeg.status) {
       const track = st.sharedName ? `DESIGNATED · ${st.sharedName}` : 'NO DESIGNATED TRACK';
       this._aeg.status.textContent = `WEAPONS ${policyLabel} · ${track}`;

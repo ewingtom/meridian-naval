@@ -45,9 +45,12 @@ export class EnemyShip extends Entity {
     this.patrolPoints = patrolPoints;
     this._patrolIdx = 0;
     this.state = State.PATROL;
-    this.engageRangeM = 3200;
-    this.gunRangeM = 2600;
-    this.missileRangeM = 4200;
+    // Sea-Power scale: a hostile SAG salvos anti-ship missiles from over the
+    // horizon (~40 km) and only closes to gun range as a finishing move, rather
+    // than steaming into a knife fight. Matches the player's ENVELOPE.
+    this.engageRangeM = 42000;   // will open fire with ASMs inside this
+    this.gunRangeM = 12000;      // gun is a close finisher
+    this.missileRangeM = 40000;  // ASM launch range
     this._gunCooldown = 0;
     this._missileCooldown = Math.random() * 8 + 6;
     this._sinkT = 0;
@@ -233,7 +236,7 @@ export class EnemyShip extends Entity {
         if (dmg.weaponsOnline) {
           const rofPenalty = 1 / dmg.fireControlFactor;
           // Guns are a finisher — only inside close range (modern SAG doctrine).
-          const gunCeiling = fleet?.gunOnlyInsideM ?? 1600;
+          const gunCeiling = fleet?.gunOnlyInsideM ?? this.gunRangeM;
           this._gunCooldown -= dt;
           if (distToFocus < gunCeiling * sense && this._gunCooldown <= 0) {
             this._gunCooldown = (2.8 + Math.random() * 1.4) * rofPenalty;

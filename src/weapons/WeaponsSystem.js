@@ -423,7 +423,7 @@ export class WeaponsSystem {
             const applied = res?.applied ?? 0;
             if (ship.damage?.lost) ship._lossNotified = true;
             this.cb.onShipHit?.(ship, applied, res);
-            this.explode(impact, { scale: res?.catastrophic ? 2.4 : 1.35 });
+            this.explode(impact, { scale: res?.catastrophic ? 3.2 : 1.7 });
             p.dead = true;
             break;
           }

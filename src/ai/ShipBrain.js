@@ -36,14 +36,23 @@ export const Objective = {
 /** Engagement envelope (metres) — missile-heavy, gun as last resort. Exported so
  *  the AEGIS console can draw a non-fabricated engagement-envelope reference
  *  ring for a hooked track, using the same doctrine numbers the AI itself
- *  fires by, rather than inventing a display-only figure. */
+ *  fires by, rather than inventing a display-only figure.
+ *
+ *  Sea Power scale: these were ~5-9 km — an inside-visual-range knife fight. The
+ *  whole point of the missile age is over-the-horizon salvo warfare, so the
+ *  envelope is now tens of kilometres: anti-ship missiles reach ~45 km, area SAMs
+ *  ~40 km, the gun is a ~13 km last-ditch weapon, and ASW torpedoes (ASROC-
+ *  delivered) ~10 km. Combat is now detected and fought on the plot at range, with
+ *  the terminal phase (inbound vampires, closing hulls) arriving in visual range.
+ *  Projectile `life` in Projectile.js is scaled to match so a shot actually
+ *  crosses the envelope over realistic minutes of flight. */
 export const ENVELOPE = {
-  asmMin: 900,
-  asmMax: 5200,
-  samMax: 9000,
-  gunMax: 1800,
-  torpedoMax: 2800,
-  screenRadius: 3600,
+  asmMin: 3000,
+  asmMax: 45000,
+  samMax: 40000,
+  gunMax: 13000,
+  torpedoMax: 10000,
+  screenRadius: 14000,
 };
 
 function distFlat(a, b) {

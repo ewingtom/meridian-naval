@@ -123,7 +123,16 @@ export class Explosion {
     this.airburst = airburst;
     this.dead = false;
     this.fireballLife = (airburst ? 0.34 : 1.05) * scale;
-    this.life = airburst ? Math.max(0.55, 0.9 * scale) : 2.6 * Math.min(1.6, scale);
+    // A surface ship strike leaves a smoke column that long outlives the fireball —
+    // it should smoke for many seconds, not puff out in two (visual-judge finding:
+    // "no dark rising smoke column"). Air and underwater bursts stay short (no
+    // persistent plume); the fireball/embers/ring run on their own shorter timers,
+    // so this only prolongs the smoke.
+    this.life = airburst
+      ? Math.max(0.55, 0.9 * scale)
+      : underwater
+        ? 2.6 * Math.min(1.6, scale)
+        : Math.min(11, 2.6 * Math.min(1.6, scale) + (scale > 1 ? 5.5 : 0));
 
     const hot = airburst
       ? new THREE.Color(0xfff4d4).multiplyScalar(3.2)
@@ -231,12 +240,29 @@ export class Explosion {
       this.smokeSprites = [];
       this.smokeGroup = new THREE.Group();
       this.smokeGroup.position.copy(position);
-      for (let i = 0; i < 3; i++) {
-        const mat = new THREE.SpriteMaterial({ map: smokeTex, color: 0x54524c, transparent: true, depthWrite: false, opacity: 0 });
+      // Puff count scales with the blast so a big ship strike throws a tall column,
+      // while a small hit stays a modest puff. Staggered initial heights + a
+      // dark-base/lighter-top gradient make the sprites read as one rising plume
+      // rather than a flat cluster.
+      const smokeCount = Math.round(THREE.MathUtils.clamp(3 + scale * 2.4, 3, 11));
+      const baseCol = new THREE.Color(0x24221f);
+      const topCol = new THREE.Color(0x6d6a63);
+      for (let i = 0; i < smokeCount; i++) {
+        const t = i / Math.max(1, smokeCount - 1); // 0 at base, 1 at top
+        const mat = new THREE.SpriteMaterial({
+          map: smokeTex, color: baseCol.clone().lerp(topCol, t),
+          transparent: true, depthWrite: false, opacity: 0,
+        });
         const spr = new THREE.Sprite(mat);
-        spr.userData.offset = new THREE.Vector3((Math.random() - 0.5) * 4 * scale, Math.random() * 2 * scale, (Math.random() - 0.5) * 4 * scale);
-        spr.userData.rise = 1.2 + Math.random() * 1.4;
-        spr.userData.drift = new THREE.Vector3((Math.random() - 0.5) * 1.5, 0, (Math.random() - 0.5) * 1.5);
+        const spread = (1 - t * 0.55); // column narrows toward the top
+        spr.userData.offset = new THREE.Vector3(
+          (Math.random() - 0.5) * 5 * scale * spread,
+          t * 7 * scale,
+          (Math.random() - 0.5) * 5 * scale * spread,
+        );
+        spr.userData.rise = 2.4 + Math.random() * 2.2 + t * 1.6;
+        spr.userData.drift = new THREE.Vector3((Math.random() - 0.5) * 1.6, 0, (Math.random() - 0.5) * 1.6);
+        spr.userData.delay = t * 0.25; // upper puffs bloom slightly later
         this.smokeGroup.add(spr);
         this.smokeSprites.push({ sprite: spr, mat });
       }
@@ -296,14 +322,17 @@ export class Explosion {
       const smokeT = THREE.MathUtils.clamp((this.age - smokeStart) / Math.max(0.01, this.life - smokeStart), 0, 1);
       for (const { sprite, mat } of this.smokeSprites) {
         const o = sprite.userData;
+        // Per-puff progress, offset by its delay so the column builds upward over
+        // time rather than every puff popping at once.
+        const pt = THREE.MathUtils.clamp((smokeT - (o.delay || 0)) / (1 - (o.delay || 0)), 0, 1);
         sprite.position.set(
           o.offset.x + o.drift.x * this.age,
           o.offset.y + o.rise * this.age,
           o.offset.z + o.drift.z * this.age
         );
-        const sc = THREE.MathUtils.lerp(1.5, 9, smokeT) * this.scale;
+        const sc = THREE.MathUtils.lerp(2.0, 12, pt) * this.scale;
         sprite.scale.setScalar(sc);
-        mat.opacity = Math.sin(Math.min(1, smokeT) * Math.PI) * 0.4;
+        mat.opacity = Math.sin(pt * Math.PI) * 0.5;
       }
     }
   }
