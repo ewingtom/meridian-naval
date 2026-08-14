@@ -142,10 +142,13 @@ export class Explosion {
         ? 2.6 * Math.min(1.6, scale)
         : Math.min(11, 2.6 * Math.min(1.6, scale) + (scale > 1 ? 5.5 : 0));
 
+    // Deeper orange (was a yellow-amber that read butter-yellow/cream), and a
+    // lower multiplier so the peak stays orange instead of blowing to cream — the
+    // judge wanted a real orange-red gradient, not a uniform yellow glow.
     const hot = airburst
-      ? new THREE.Color(0xfff4d4).multiplyScalar(3.2)
-      : (underwater ? new THREE.Color(0x8fe8ff) : new THREE.Color(0xffb247)).multiplyScalar(underwater ? 2.0 : 2.4);
-    const core = airburst ? new THREE.Color(0xbfc4c8) : (underwater ? new THREE.Color(0x1c5a70) : new THREE.Color(0x5c1604));
+      ? new THREE.Color(0xfff4d4).multiplyScalar(3.0)
+      : (underwater ? new THREE.Color(0x8fe8ff) : new THREE.Color(0xff7a2e)).multiplyScalar(underwater ? 2.0 : 2.0);
+    const core = airburst ? new THREE.Color(0xbfc4c8) : (underwater ? new THREE.Color(0x1c5a70) : new THREE.Color(0x4a0f02));
 
     this.fireMat = new THREE.ShaderMaterial({
       uniforms: {

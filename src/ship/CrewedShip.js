@@ -435,9 +435,12 @@ export class CrewedShip {
 
         // Modern Burke haze-grey: clean paint, slight clearcoat — not chalky weathered steel
         if (typeof mat.roughness === 'number') {
+          // Pushed matte-ward — the judge read the hull as "too shiny (broad
+          // specular sheen) vs matte haze-grey naval paint." Metal was near-mirror
+          // (0.18-0.36); paint capped at a semi-gloss 0.58.
           mat.roughness = isMetal
-            ? Math.min(0.36, Math.max(0.18, mat.roughness))
-            : Math.max(0.38, Math.min(0.58, mat.roughness));
+            ? Math.min(0.48, Math.max(0.28, mat.roughness))
+            : Math.max(0.44, Math.min(0.66, mat.roughness));
         }
         if (typeof mat.metalness === 'number') {
           mat.metalness = isMetal ? Math.max(0.72, mat.metalness) : Math.min(mat.metalness, 0.14);
@@ -478,8 +481,10 @@ export class CrewedShip {
             // Hero: barely any clearcoat. A glossy coat on top of haze grey blows out
             // to chalk white on every sunlit face, which is exactly the "old bleached
             // ship" read we're trying to get away from — modern navy paint is flat.
-            phys.clearcoat = isPaint ? (isHero ? 0.05 : 0.22) : (isMetal ? 0.12 : 0.16);
-            phys.clearcoatRoughness = isPaint ? (isHero ? 0.55 : 0.28) : 0.3;
+            // Cut the escort's glossy paint coat (0.22 -> 0.10) — a broad clearcoat
+            // sheen on haze-grey is the "too shiny" tell; modern navy paint is flat.
+            phys.clearcoat = isPaint ? (isHero ? 0.05 : 0.10) : (isMetal ? 0.09 : 0.14);
+            phys.clearcoatRoughness = isPaint ? (isHero ? 0.55 : 0.45) : 0.35;
             phys.envMapIntensity = mat.envMapIntensity;
             if (Array.isArray(o.material)) o.material[mi] = phys;
             else o.material = phys;

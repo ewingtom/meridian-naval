@@ -184,9 +184,10 @@ export class ShipWake {
       // Arc up off the shoulder, higher with speed.
       const lift = 1.0 + rank * 0.7 + intensity * 1.6 * Math.abs(Math.sin(elapsed * 3 + i));
       spr.position.set(px, waterY + lift, pz);
-      const scale = (beam * 0.16) * (0.6 + intensity * 0.7);
+      // Small and faint — just a hint of atomized spray, not opaque cotton-balls.
+      const scale = (beam * 0.1) * (0.5 + intensity * 0.6);
       spr.scale.set(scale, scale, 1);
-      this.sprayMats[i].opacity = 0.5 * intensity * (0.5 + 0.5 * Math.abs(Math.sin(elapsed * 4.5 + i)));
+      this.sprayMats[i].opacity = 0.26 * intensity * (0.4 + 0.6 * Math.abs(Math.sin(elapsed * 4.5 + i)));
     }
   }
 

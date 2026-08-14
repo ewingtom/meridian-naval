@@ -344,8 +344,9 @@ def build_steel_set(size=512, seed=21, base_hex="6E7A85",
     rgb *= (1.0 - grime[..., None] * 0.28)
     rgb = np.clip(rgb, 0, 1)
 
-    # roughness: paint ~0.52, seams+streaks+grime+wear rougher, salt patches too
-    rough = np.full((h, w), 0.52, np.float32)
+    # roughness: matte haze-grey navy paint ~0.60 (was 0.52 — read too shiny),
+    # seams+streaks+grime+wear rougher still, salt patches too
+    rough = np.full((h, w), 0.60, np.float32)
     rough += groove * 0.16 + st * 0.22 + grime * 0.18 + salt * 0.14 + wear * 0.30
     rough -= (mott - 0.5) * 0.08
     rough = np.clip(rough, 0.4, 0.94)
