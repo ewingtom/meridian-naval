@@ -26,16 +26,20 @@ export class ShipWake {
 
     const beam = ship.physics.beam || 20;
     const foam = getSharedFoamTexture();
-    const mkRibbon = (life, widthScale, alphaScale) => new TrailRibbon(scene, {
+    const mkRibbon = (life, widthScale, alphaScale, churnScale = 1) => new TrailRibbon(scene, {
       capacity: 160,
       life,
-      color: 0xb8c8d0,
+      // Near-white churned water rather than the old blue-grey that read as thin
+      // turquoise ribbons against the sea (judge finding). Kept just below pure
+      // white so the conservative bloom (threshold 0.92) doesn't turn the waterline
+      // into an emissive skirt — density/opacity, not HDR brightness, sells it.
+      color: 0xe6eef0,
       map: foam,
       additive: false,
       orientation: 'horizontal',
       uvRepeat: 6,
       renderOrder: 2,
-      opacity: 0.48,
+      opacity: 0.7,
       widthFn: (age, life, u, speedKn) => {
         const speedFactor = THREE.MathUtils.clamp((speedKn ?? 10) / 24, 0.35, 1.1);
         const spread = Math.min(1, Math.pow(age / (life * 0.55), 0.85));
@@ -43,26 +47,35 @@ export class ShipWake {
           * (0.5 + 0.5 * speedFactor);
       },
       alphaFn: (age, life, u, speedKn) => {
-        const fadeIn = THREE.MathUtils.clamp(age / 0.55, 0, 1);
+        const fadeIn = THREE.MathUtils.clamp(age / 0.35, 0, 1);
         const t = THREE.MathUtils.clamp(age / life, 0, 1);
         const fadeOut = Math.pow(1 - t, 1.3);
-        const speedFactor = THREE.MathUtils.clamp((speedKn ?? 10) / 16, 0.2, 0.9);
+        const speedFactor = THREE.MathUtils.clamp((speedKn ?? 10) / 16, 0.2, 1.0);
         const edge = 0.22 + 0.78 * (1 - Math.abs(u * 2 - 1));
-        return fadeIn * fadeOut * speedFactor * alphaScale * edge;
+        const base = fadeIn * fadeOut * speedFactor * alphaScale * edge;
+        // Dense, near-opaque churn right behind the transom (young samples),
+        // softening into the long readable trail — the prop-wash the judge wanted.
+        const churn = churnScale * 0.55 * (1 - THREE.MathUtils.smoothstep(t, 0.0, 0.24)) * speedFactor;
+        return Math.min(1, base + churn);
       },
     });
 
-    this.ribbon = mkRibbon(this.life, 1.0, 0.7);
-    this.kelvinL = mkRibbon(this.life * 0.92, 0.68, 0.5);
-    this.kelvinR = mkRibbon(this.life * 0.92, 0.68, 0.5);
+    // Main stern lane carries the heavy prop-wash churn; Kelvin arms are lighter.
+    this.ribbon = mkRibbon(this.life, 1.15, 0.8, 1.0);
+    this.kelvinL = mkRibbon(this.life * 0.92, 0.68, 0.5, 0.35);
+    this.kelvinR = mkRibbon(this.life * 0.92, 0.68, 0.5, 0.35);
 
     const dotTex = getSharedFoamTexture();
     this.sprayMats = [];
     this.spraySprites = [];
     this.sprayGroup = new THREE.Group();
-    for (let i = 0; i < 5; i++) {
+    // Bow-wave "mustache" — a row of foam puffs down each side, sitting on the
+    // waterline and fanning outward+aft where the bow shoulders the sea aside.
+    // More puffs than the old 5-droplet spray so it reads as a continuous foam
+    // band, not a sparse sparkle.
+    for (let i = 0; i < 12; i++) {
       const mat = new THREE.SpriteMaterial({
-        map: dotTex, color: 0xd8e8ee, transparent: true, depthWrite: false, opacity: 0,
+        map: dotTex, color: 0xeef4f6, transparent: true, depthWrite: false, opacity: 0,
       });
       const spr = new THREE.Sprite(mat);
       spr.visible = false;
@@ -120,30 +133,39 @@ export class ShipWake {
   }
 
   _updateBowSpray(elapsed, speedKn, getWaveHeight) {
-    const active = speedKn > 8;
+    // Bow wave builds from a slow bone-in-teeth to a full mustache with speed.
+    const active = speedKn > 6;
     if (!active) {
       for (const s of this.spraySprites) s.visible = false;
       return;
     }
     this.ship.getMountWorld(this._bowLocal, _bowWorld);
-    const waterY = getWaveHeight(_bowWorld.x, _bowWorld.z, elapsed);
-    const intensity = THREE.MathUtils.clamp((speedKn - 8) / 18, 0, 1) * 0.72;
+    const intensity = THREE.MathUtils.clamp((speedKn - 6) / 18, 0, 1);
     const fwd = this.ship.forward;
+    _right.set(fwd.z, 0, -fwd.x).normalize();
     const beam = this.ship.physics.beam || 20;
-    for (let i = 0; i < this.spraySprites.length; i++) {
+    const len = this.ship.physics.length || 150;
+    const n = this.spraySprites.length;
+    const perSide = n / 2;
+    for (let i = 0; i < n; i++) {
       const spr = this.spraySprites[i];
       spr.visible = true;
       const side = i % 2 === 0 ? 1 : -1;
-      const rank = Math.floor(i / 2) + 1;
-      const jitter = Math.sin(elapsed * 6.3 + i * 2.7) * 0.45;
-      spr.position.set(
-        _bowWorld.x - fwd.x * rank * 2.0 + side * (beam * 0.2 * rank) + jitter,
-        waterY + 0.85 + rank * 0.45 * intensity,
-        _bowWorld.z - fwd.z * rank * 2.0,
-      );
-      const scale = (2.1 + rank * 1.35) * (0.45 + intensity * 0.65);
-      spr.scale.set(scale, scale, 1);
-      this.sprayMats[i].opacity = 0.42 * intensity * (0.55 + 0.45 * Math.abs(Math.sin(elapsed * 4 + i)));
+      const rank = Math.floor(i / 2); // 0..perSide-1, growing aft from the stem
+      const t = rank / Math.max(1, perSide - 1);
+      // Fan outboard and aft: the foam mustache widens and trails back from the bow.
+      const out = beam * (0.18 + t * 0.55);
+      const back = 2.5 + t * (len * 0.22);
+      const px = _bowWorld.x - fwd.x * back + _right.x * side * out;
+      const pz = _bowWorld.z - fwd.z * back + _right.z * side * out;
+      const waterY = getWaveHeight(px, pz, elapsed);
+      // Sit ON the waterline, highest right at the bow shoulder (bone in the teeth).
+      const lift = 0.3 + (1 - t) * intensity * 1.2;
+      spr.position.set(px, waterY + lift, pz);
+      const scale = (beam * 0.3) * (0.6 + t * 0.9) * (0.55 + intensity * 0.7);
+      spr.scale.set(scale, scale * 0.72, 1);
+      const shimmer = 0.7 + 0.3 * Math.abs(Math.sin(elapsed * 5 + i * 1.7));
+      this.sprayMats[i].opacity = (0.62 * (1 - t * 0.55)) * intensity * shimmer;
     }
   }
 

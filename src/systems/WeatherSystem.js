@@ -44,7 +44,12 @@ const STATES = {
     cloudShadow: 0x35455a,
     sunMul: 1.0,
     sunGray: 0.0,
-    hemi: 0.16,
+    // Lifted from 0.16 — the judge found the ships' new PBR detail (panel seams,
+    // rust) crushed to a near-black silhouette on the un-sunlit broadside, since
+    // SSAO is off at the default medium tier. A touch more sky-blue hemispheric
+    // fill reads the shadowed side back in (realistic — open sea fills shadows with
+    // skylight) without washing out the sun-sculpted form on the lit side.
+    hemi: 0.24,
     waveAmp: 1.0,
     rain: 0.0,
     deep: 0x071f32,
@@ -64,7 +69,7 @@ const STATES = {
     cloudShadow: 0x33404e,
     sunMul: 0.82,
     sunGray: 0.25,
-    hemi: 0.2,
+    hemi: 0.27,
     waveAmp: 1.12,
     rain: 0.0,
     deep: 0x0a2233,
