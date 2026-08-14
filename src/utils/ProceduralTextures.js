@@ -288,6 +288,48 @@ export function buildFoamTexture({ size = 128, seed = 0 } = {}) {
   return tex;
 }
 
+/** Frothy, tiling wake-foam texture for the wake RIBBONS (kept separate from the
+ * soft blob foam the smoke sprites use). The judge read the wake as a "soft
+ * airbrushed glow band" — this gives it high-frequency churn: a mid-frequency
+ * foam mass punctuated by bright aerated bubble specks and darker turbid gaps, so
+ * the ribbon reads as frothy churned water rather than a uniform glow. Repeat-
+ * wrapped on both axes so it tiles along and across the ribbon. */
+export function buildWakeFoamTexture({ size = 256, seed = 3 } = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      // Mid-frequency foam mass + a fine bubble layer. Two frequencies read as
+      // "big clumps of froth made of little bubbles."
+      const mass = fbm(x * 0.045 + seed * 11, y * 0.045 + seed * 5, 4);
+      const fine = fbm(x * 0.19 + seed * 31, y * 0.19 + seed * 17, 3);
+      const foam = THREE.MathUtils.clamp(mass * 1.35 - 0.12, 0, 1);
+      // Bubble specks: bright where the fine layer peaks, gated by foam mass.
+      const bubbles = Math.pow(THREE.MathUtils.clamp((fine - 0.56) / 0.44, 0, 1), 1.4) * foam;
+      // Turbid gaps: knock holes in the mass where the fine layer troughs.
+      const gaps = Math.pow(THREE.MathUtils.clamp((0.42 - fine) / 0.42, 0, 1), 1.6) * 0.5;
+      const a = THREE.MathUtils.clamp(foam * 0.85 + bubbles * 0.7 - gaps, 0, 1);
+      const i = (y * size + x) * 4;
+      // Foam is white with a faint cool tint in the thinner areas.
+      const tint = 235 + Math.round(bubbles * 20);
+      img.data[i] = tint; img.data[i + 1] = Math.min(255, tint + 4); img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+let _wakeFoamTex = null;
+export function getSharedWakeFoamTexture() {
+  if (!_wakeFoamTex) _wakeFoamTex = buildWakeFoamTexture();
+  return _wakeFoamTex;
+}
+
 /** Smooth radial glow dot — pure gradient, no noise. Used for ember/spark points,
  * projectile tracer glow, and the bright hot-round billboard riding on shells. */
 export function buildSoftDotTexture({ size = 64 } = {}) {

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { TrailRibbon } from '../utils/TrailRibbon.js';
-import { getSharedFoamTexture } from '../utils/ProceduralTextures.js';
+import { getSharedFoamTexture, getSharedWakeFoamTexture } from '../utils/ProceduralTextures.js';
 
 const _sternWorld = new THREE.Vector3();
 const _bowWorld = new THREE.Vector3();
@@ -25,7 +25,9 @@ export class ShipWake {
     this.life = 16;
 
     const beam = ship.physics.beam || 20;
-    const foam = getSharedFoamTexture();
+    // Frothy high-frequency foam for the ribbons (the smoke/spray keep the soft
+    // blob foam); this is what makes the wake read as churned water, not a glow.
+    const foam = getSharedWakeFoamTexture();
     const mkRibbon = (life, widthScale, alphaScale, churnScale = 1) => new TrailRibbon(scene, {
       capacity: 160,
       life,
