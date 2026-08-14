@@ -230,14 +230,18 @@ lp_y, lp_z = PED_TOP + 0.20, -0.30
 parts.append(box("LowerPanel", (0, lp_y, lp_z),
                  (WIDTH - 0.02, 0.30, 0.05), M_FACE, bevel_w=0.012,
                  rot=(math.radians(90) - LP_RAKE, 0, 0)))
-# panel-normal helpers so switches/knobs sit proud of the raked surface
-lp_n = (0.0, math.sin(LP_RAKE), -math.cos(LP_RAKE))   # outward face normal (up & toward -Z)
+# panel-normal helpers so switches/knobs sit proud of the raked surface.
+# A panel raked RAKE degrees from horizontal (its box is rotated 90deg-RAKE about
+# X) has an operator-facing normal at RAKE from vertical: (0, cosR, -sinR) — up &
+# toward -Z. The along-panel 'up' is its perpendicular: (0, sinR, cosR). (These had
+# sin/cos swapped, which pushed instruments off the wrong axis of the panel.)
+lp_n = (0.0, math.cos(LP_RAKE), -math.sin(LP_RAKE))   # outward face normal (up & toward -Z)
 
 
 def on_lower(u, v):
     """u across width (m), v up the panel from its centre (m) -> world point on
     the lower panel's outer face."""
-    up = (0.0, math.cos(LP_RAKE), math.sin(LP_RAKE))   # along-panel 'up' direction
+    up = (0.0, math.sin(LP_RAKE), math.cos(LP_RAKE))   # along-panel 'up' direction
     return (u,
             lp_y + up[1] * v + lp_n[1] * 0.03,
             lp_z + up[2] * v + lp_n[2] * 0.03)
@@ -288,8 +292,8 @@ for rr in range(3):
 MP_RAKE = math.radians(74)          # nearly upright, tilted toward operator
 mp_y, mp_z = PED_TOP + 0.44, -0.12
 mp_rot = (math.radians(90) - MP_RAKE, 0, 0)
-mp_n = (0.0, math.sin(MP_RAKE), -math.cos(MP_RAKE))
-mp_up = (0.0, math.cos(MP_RAKE), math.sin(MP_RAKE))
+mp_n = (0.0, math.cos(MP_RAKE), -math.sin(MP_RAKE))   # operator-facing normal
+mp_up = (0.0, math.sin(MP_RAKE), math.cos(MP_RAKE))   # along-panel 'up'
 
 
 def on_main(u, v, out=0.0):

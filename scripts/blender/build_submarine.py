@@ -6,8 +6,15 @@ Bow = +Z in export. Run:
 import bpy
 import bmesh
 import math
+import sys
 from mathutils import Vector
 from pathlib import Path
+
+_SCRIPT_DIR = str(Path(__file__).resolve().parent) if "__file__" in globals() \
+    else "/Users/tje/games/warship/scripts/blender"
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+import warship_textures as wtex  # noqa: E402
 
 OUT_PUBLIC = Path("/Users/tje/games/warship/public/assets/models/enemy_submarine.glb")
 OUT_SRC = Path("/Users/tje/games/warship/src/assets/models/enemy_submarine.glb")
@@ -111,6 +118,24 @@ def shade(obj, angle=35):
         bpy.ops.object.shade_smooth(use_auto_smooth=True, angle=math.radians(angle))
     except TypeError:
         pass
+
+
+def uv_cube(obj, size=5.5):
+    """World-scale box projection so the tiling anechoic/metal maps hold a constant
+    physical tile size across the whole boat (the loft has no UVs of its own)."""
+    if obj.type != "MESH":
+        return
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    try:
+        bpy.ops.uv.cube_project(cube_size=size, correct_aspect=True)
+    except Exception:
+        pass
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.select_set(False)
 
 
 def mesh_from_bmesh(name, bm, mat=None):
@@ -226,12 +251,22 @@ def build_sail_loft(stations, mat):
     return sail
 
 
-# Materials
-mat_hull = new_hull_mat("SubHull", (0.12, 0.14, 0.16))
-mat_sail = new_mat("SubSail", (0.16, 0.18, 0.2), roughness=0.55, metallic=0.28)
+# Materials. The old hull used a procedural node graph (wave textures) that the
+# glTF exporter silently drops -> the sub shipped with zero maps and read as a
+# featureless dark blob. Baked anechoic-tile + metal maps fix that (and survive
+# export). See warship_textures.py.
+mat_hull = new_mat("SubHull", (1.0, 1.0, 1.0), roughness=0.9, metallic=0.0)
+mat_sail = new_mat("SubSail", (1.0, 1.0, 1.0), roughness=0.9, metallic=0.0)
 mat_dark = new_mat("SubDark", (0.05, 0.055, 0.06), roughness=0.75, metallic=0.15)
-mat_metal = new_mat("SubMetal", (0.25, 0.26, 0.28), roughness=0.35, metallic=0.75)
+mat_metal = new_mat("SubMetal", (1.0, 1.0, 1.0), roughness=0.4, metallic=0.75)
 mat_rubber = new_mat("SubRubber", (0.04, 0.04, 0.045), roughness=0.9, metallic=0.05)
+
+_anech = wtex.build_anechoic_set(size=512, seed=81, base_hex="212429", tiles=11,
+                                 name="SUB_ANECHOIC")
+_submetal = wtex.build_metal_set(size=256, seed=91, base_hex="2A2D31", name="SUB_METAL")
+wtex.assign_pbr(mat_hull, _anech, metallic=None)   # metalness from ORM (bare patches)
+wtex.assign_pbr(mat_sail, _anech, metallic=None)
+wtex.assign_pbr(mat_metal, _submetal, metallic=0.75)
 
 LOA = 95.0
 hull_stations = [
@@ -341,6 +376,14 @@ guard = bpy.context.active_object
 guard.name = "PropGuard"
 guard.data.materials.append(mat_metal)
 shade(guard)
+
+# World-scale UVs on every part (the loft/primitives ship none) so the tiling
+# anechoic/metal maps read at a constant physical size — must happen BEFORE the
+# join, while each part is still separate, or a single projection would smear one
+# tile over the whole 95 m boat.
+bpy.ops.object.mode_set(mode="OBJECT")
+for o in [o for o in scene.objects if o.type == "MESH"]:
+    uv_cube(o, 5.5)
 
 # Join for single-mesh export
 objs = [o for o in scene.objects if o.type == "MESH"]

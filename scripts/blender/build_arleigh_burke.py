@@ -28,10 +28,17 @@ from __future__ import annotations
 
 import math
 import shutil
+import sys
 from pathlib import Path
 
 import bmesh
 import bpy
+
+_SCRIPT_DIR = str(Path(__file__).resolve().parent) if "__file__" in globals() \
+    else "/Users/tje/games/warship/scripts/blender"
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+import warship_textures as wtex  # noqa: E402
 
 ROOT = Path("/Users/tje/games/warship")
 OUT = ROOT / "public/assets/models/player_ship.glb"
@@ -330,8 +337,40 @@ mat_spy = new_mat("SPYFace", hexc("23282D"), 0.44, 0.35)
 mat_vls = new_mat("VLSCell", hexc("2C3237"), 0.50, 0.45)
 mat_mark = new_mat("HelipadMarking", hexc("D8D9D2"), 0.72, 0.03)
 mat_glass = new_mat("Bridge_Glass", hexc("0D1519"), 0.10, 0.35)
+# Painted hull number ("119" for DDG-119) — a thin alpha decal on the bow flare.
+mat_number = new_mat("Marking_HullNumber", hexc("C6C8C2"), 0.62, 0.02)
+mat_number.blend_method = "BLEND"
 
 HULL_MATS = [mat_hull, mat_deck, mat_boot, mat_keel]  # indices 0..3
+
+# --------------------------------------------------------------------------
+# PBR TEXTURE PASS — real weathered-steel maps (plate seams, rust streaking,
+# non-skid grit, spatial roughness) baked into the paint materials. This is
+# what moves the hull off "grey blockout plastic". See warship_textures.py.
+# The runtime keeps these because a material with a baked map short-circuits
+# CrewedShip._addMicroDetailMaps' procedural-map generation.
+# --------------------------------------------------------------------------
+_steel = wtex.build_steel_set(size=512, seed=21, base_hex="6E7A85",
+                              strakes=5, frames=4, rust=0.6, name="BK_STEEL")
+_super = wtex.build_steel_set(size=512, seed=27, base_hex="74808B",
+                              strakes=6, frames=5, rust=0.4, name="BK_SUPER")
+_nonskid = wtex.build_nonskid_set(size=512, seed=31, base_hex="3E464C", name="BK_NONSKID")
+_metal = wtex.build_metal_set(size=256, seed=51, base_hex="2E343A", name="BK_METAL")
+_boot = wtex.build_flat_set(size=256, seed=61, base_hex="141719",
+                            rough_val=0.48, streak=0.7, name="BK_BOOT")
+_keel = wtex.build_flat_set(size=256, seed=71, base_hex="3A1512", rough_val=0.86, name="BK_KEEL")
+
+# Paint materials link metalness from the ORM's B channel (which is 0), not a
+# scalar: that keeps the packed metallicRoughness map exportable as JPEG instead of
+# forcing a PNG re-encode, and the 0 B-channel keeps the paint non-metallic through
+# the runtime's metalness-factor clamps regardless.
+wtex.assign_pbr(mat_hull, _steel, metallic=None, uv_scale=1.0)
+wtex.assign_pbr(mat_super, _super, metallic=None, uv_scale=1.0)
+wtex.assign_pbr(mat_deck, _nonskid, metallic=None, uv_scale=1.0)
+wtex.assign_pbr(mat_boot, _boot, metallic=None, uv_scale=1.0)
+wtex.assign_pbr(mat_keel, _keel, metallic=None, uv_scale=1.0)
+wtex.assign_pbr(mat_metal, _metal, metallic=0.72, uv_scale=1.0)
+wtex.assign_pbr(mat_vls, _metal, metallic=0.55, uv_scale=1.0)
 
 
 # --------------------------------------------------------------------------
@@ -420,7 +459,10 @@ for m in HULL_MATS:
     hull.data.materials.append(m)
 bevel(hull, 0.07, 2, angle=34)
 shade_smooth(hull, 30)
-uv_smart(hull, 0.008)
+# World-scale box projection (not smart-project): the tiling steel/nonskid/boot maps
+# need a CONSISTENT physical plate pitch and vertical streak direction across the whole
+# hull. Smart-project's per-face islands scatter panel-line scale/orientation randomly.
+uv_cube(hull, 7.5)
 
 def deck_hw(z):
     """Deck-edge half-beam, interpolated straight off the hull stations so coamings
@@ -488,6 +530,52 @@ bpy.ops.object.transform_apply(rotation=True)
 stem.data.materials.append(mat_hull)
 bevel(stem, 0.08, 2)
 shade_smooth(stem, 35)
+
+# ---- painted bow hull number "119" (DDG-119 Meridian) -------------------------
+# A thin alpha decal quad on each bow flank, following the local deck-edge taper
+# and sitting a hair proud of the plating so it reads as paint, not a floating card.
+_num_img = wtex.make_number_image("119", "BK_NUM119", fg_hex="C6C8C2", size_h=96)
+mat_number.use_backface_culling = False
+_nt = mat_number.node_tree
+_bsdf = _nt.nodes.get("Principled BSDF")
+_texn = _nt.nodes.new("ShaderNodeTexImage")
+_texn.image = _num_img
+_texn.location = (-400, 0)
+_nt.links.new(_texn.outputs["Color"], _bsdf.inputs["Base Color"])
+_nt.links.new(_texn.outputs["Alpha"], _bsdf.inputs["Alpha"])
+
+
+def hull_number(tag, side, zc=67.0, half_z=2.9, half_y=1.15):
+    yc = sheer(zc) - 2.55
+    bm2 = bmesh.new()
+    uvl = bm2.loops.layers.uv.new("UVMap")
+    # corners: aft-bot, aft-top, fwd-top, fwd-bot (aft = -z, fwd = +z)
+    zs = [zc - half_z, zc - half_z, zc + half_z, zc + half_z]
+    ys = [yc - half_y, yc + half_y, yc + half_y, yc - half_y]
+    verts = []
+    for z, y in zip(zs, ys):
+        # deck_hw already carries the 0.984 deck-edge factor; the hull's max-beam
+        # KNUCKLE sits ~deck_hw/0.984 outboard, so proud of *that* (+0.32) or the
+        # decal buries itself in the flare and only a corner pokes through.
+        x = side * (deck_hw(z) / 0.984 + 0.32)
+        verts.append(bm2.verts.new((x, y, z)))
+    f = bm2.faces.new(verts)
+    bm2.normal_update()
+    if f.normal.x * side < 0:      # ensure it faces outboard
+        f.normal_flip()
+    # u runs bow->stern reading order on each side (starboard reads +z->-z from
+    # outboard, port the mirror), v runs bottom->top
+    us = [1, 1, 0, 0] if side > 0 else [0, 0, 1, 1]
+    vs = [0, 1, 1, 0]
+    for loop, u, v in zip(f.loops, us, vs):
+        loop[uvl].uv = (u, v)
+    obj = mesh_from_bmesh(f"HullNumber_{tag}", bm2)
+    obj.data.materials.append(mat_number)
+    return obj
+
+
+hull_number("S", 1)
+hull_number("P", -1)
 
 
 

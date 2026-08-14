@@ -57,10 +57,17 @@ from __future__ import annotations
 
 import math
 import shutil
+import sys
 from pathlib import Path
 
 import bmesh
 import bpy
+
+_SCRIPT_DIR = str(Path(__file__).resolve().parent) if "__file__" in globals() \
+    else "/Users/tje/games/warship/scripts/blender"
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+import warship_textures as wtex  # noqa: E402
 
 ROOT = Path("/Users/tje/games/warship")
 OUT = ROOT / "public/assets/models/escort_hull.glb"
@@ -354,6 +361,35 @@ mat_iff = new_mat("EH_IFFMat", hexc("C4C8CC"), 0.35, 0.10, emission=(0.6, 0.65, 
 
 HULL_MATS = [mat_hull, mat_deck, mat_boot, mat_keel]  # indices 0..3
 
+# --------------------------------------------------------------------------
+# PBR TEXTURE PASS — weathered-steel maps (plate seams, rust streaks, non-skid
+# grit, spatial roughness) baked into the paint materials, same treatment as the
+# hero Burke. Reused by both friendly escorts and every hostile FFG contact, so
+# a slightly heavier-worn look than the flagship reads well at a distance. The
+# runtime keeps these (EnemyShip/CrewedShip only add detail maps where absent)
+# and still IFF-tints EH_Hull/EH_Super via a light colour lerp over the map.
+# --------------------------------------------------------------------------
+_steel = wtex.build_steel_set(size=512, seed=121, base_hex="6E7A85",
+                              strakes=5, frames=4, rust=0.7, name="EH_STEEL")
+_super = wtex.build_steel_set(size=512, seed=127, base_hex="74808B",
+                              strakes=6, frames=5, rust=0.5, name="EH_SUPER")
+_nonskid = wtex.build_nonskid_set(size=512, seed=131, base_hex="3E464C", name="EH_NONSKID")
+_metal = wtex.build_metal_set(size=256, seed=151, base_hex="2E343A", name="EH_METAL")
+_boot = wtex.build_flat_set(size=256, seed=161, base_hex="141719",
+                            rough_val=0.48, streak=0.7, name="EH_BOOT")
+_keel = wtex.build_flat_set(size=256, seed=171, base_hex="3A1512", rough_val=0.86, name="EH_KEEL")
+
+# Paint materials link metalness from the ORM's B channel (0) so the packed
+# metallicRoughness map stays JPEG (no PNG re-encode) and paint reads non-metallic
+# through the runtime metalness clamps. See build_arleigh_burke.py for the rationale.
+wtex.assign_pbr(mat_hull, _steel, metallic=None)
+wtex.assign_pbr(mat_super, _super, metallic=None)
+wtex.assign_pbr(mat_deck, _nonskid, metallic=None)
+wtex.assign_pbr(mat_boot, _boot, metallic=None)
+wtex.assign_pbr(mat_keel, _keel, metallic=None)
+wtex.assign_pbr(mat_metal, _metal, metallic=0.72)
+wtex.assign_pbr(mat_vls, _metal, metallic=0.55)
+
 
 # --------------------------------------------------------------------------
 # HULL — lofted stations, hard knuckle, flared/raked bow, flat transom.
@@ -433,7 +469,9 @@ for m in HULL_MATS:
     hull.data.materials.append(m)
 bevel(hull, 0.06, 2, angle=34)
 shade_smooth(hull, 30)
-uv_smart(hull, 0.008)
+# World-scale box projection (not smart-project) so the tiling steel/nonskid/boot maps
+# hold a consistent physical plate pitch and vertical streak direction across the hull.
+uv_cube(hull, 6.5)
 
 
 def deck_hw(z):
