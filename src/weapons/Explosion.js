@@ -34,12 +34,20 @@ float noise(vec3 x) {
 void main() {
   vec3 viewDir = normalize(cameraPosition - vWorldPos);
   float fresnel = pow(1.0 - clamp(dot(normalize(vNormal), viewDir), 0.0, 1.0), 1.6);
+  // Three octaves with a sharper contrast curve so the fire reads as turbulent
+  // billows (dark gaps between bright wisps) instead of a smooth glassy glob.
   float n = noise(vWorldPos * 0.09 + uTime * 1.8);
   n += noise(vWorldPos * 0.22 - uTime * 1.1) * 0.5;
-  n /= 1.5;
-  float turb = smoothstep(0.2, 0.85, n);
+  n += noise(vWorldPos * 0.48 + uTime * 2.4) * 0.25;
+  n /= 1.75;
+  float turb = smoothstep(0.32, 0.78, n);
   vec3 color = mix(uColorCore, uColorHot, turb);
-  float alpha = mix(0.35, 1.0, turb) * (1.0 - uProgress) * mix(0.5, 1.0, fresnel);
+  // Dimmer additive contribution than before (peak ~0.62, not 1.0): additive
+  // fireballs SUM where they overlap, so a bright one blew rapid/stacked hits out
+  // to a cream-white mass past the bloom threshold. Kept dim so the opaque core
+  // (drawn over this) carries the brightness and stacked blasts stay legible fire
+  // + dark smoke rather than a white blob.
+  float alpha = mix(0.16, 0.62, turb) * (1.0 - uProgress) * mix(0.4, 0.85, fresnel);
   gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
 }
 `;
