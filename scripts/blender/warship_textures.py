@@ -126,37 +126,66 @@ def _normal_from_height(height, strength):
 
 
 # --------------------------------------------------------------------------
-# plate-seam field: horizontal welded strakes + transverse frames, lightly
-# irregular. Returns (groove, bead): groove is a 0..1 recess along the seam,
-# bead is a thin raised weld lip beside it.
+# plate-seam field: welded hull plating with UNEVEN strake heights (plus the
+# odd wide hull-insert strake) and vertical butt joints STAGGERED strake-to-
+# strake — brickwork, not an aligned grid — so under raking light it reads as
+# irregular real plating instead of a repeating quilt. Returns (groove, bead):
+# groove is a 0..1 recess along the seam, bead a thin raised weld lip beside it.
+# Everything wraps so the map still tiles.
 # --------------------------------------------------------------------------
 def _plate_seams(h, w, strakes, frames, seed, jitter=0.06):
     rng = np.random.default_rng(seed)
-    yy = (np.arange(h, dtype=np.float32) / h)[:, None]
-    xx = (np.arange(w, dtype=np.float32) / w)[None, :]
+    V = (np.arange(h, dtype=np.float32) / h)[:, None]   # 0..1 up the topsides
+    U = (np.arange(w, dtype=np.float32) / w)[None, :]    # 0..1 along the hull
     groove = np.zeros((h, w), dtype=np.float32)
     bead = np.zeros((h, w), dtype=np.float32)
-    gw_h = 0.0016  # seam half-width in UV
+    gw = 0.0016  # nominal seam half-width in UV
 
-    def _line(coord_img, pos, wob):
-        centre = pos + wob
-        d = coord_img - centre
-        g = np.exp(-(d ** 2) / (2 * gw_h ** 2))
-        b = np.exp(-((np.abs(d) - gw_h * 2.2) ** 2) / (2 * (gw_h * 1.1) ** 2))
+    def _seam(coord, centre, gwh, gstr, bstr, vmask=None):
+        # wrapped distance so seams tile; `centre` may be a 2D wobble field.
+        d = coord - centre
+        d = d - np.round(d)
+        g = np.exp(-(d ** 2) / (2 * gwh ** 2)) * gstr
+        b = np.exp(-((np.abs(d) - gwh * 2.4) ** 2) / (2 * (gwh * 1.15) ** 2)) * bstr
+        if vmask is not None:
+            g = g * vmask
+            b = b * vmask
         return g, b
 
-    # horizontal strakes (constant V) — the dominant "ship" read
+    def _stamp(g, b):
+        nonlocal groove, bead
+        groove = np.maximum(groove, g)
+        bead = np.maximum(bead, b)
+
+    # ---- horizontal strakes: uneven plate heights, occasional wide insert ----
+    widths = rng.uniform(0.72, 1.35, size=strakes).astype(np.float32)
     for i in range(strakes):
-        pos = (i + 0.5) / strakes + (rng.random() - 0.5) * jitter / strakes
-        wob = (_value_noise(h, w, w / 3.0, seed + 300 + i) - 0.5) * 0.010
-        g, b = _line(yy, pos, wob)
-        groove = np.maximum(groove, g); bead = np.maximum(bead, b * 0.6)
-    # transverse frames (constant U), a touch subtler
-    for i in range(frames):
-        pos = (i + 0.5) / frames + (rng.random() - 0.5) * jitter / frames
-        wob = (_value_noise(h, w, h / 3.0, seed + 600 + i) - 0.5) * 0.008
-        g, b = _line(xx, pos, wob)
-        groove = np.maximum(groove, g * 0.85); bead = np.maximum(bead, b * 0.4)
+        if rng.random() < 0.16:
+            widths[i] *= float(rng.uniform(1.6, 2.3))   # wide hull-insert strake
+    widths /= widths.sum()
+    edges = np.concatenate([[0.0], np.cumsum(widths)]).astype(np.float32)
+
+    wob_h = (_value_noise(h, w, w / 3.0, seed + 300) - 0.5) * 0.010
+    for i in range(strakes):                            # seam at every band edge
+        gwh = gw * float(rng.uniform(0.85, 1.35))
+        _stamp(*_seam(V, edges[i] + wob_h, gwh, 1.0, 0.6))
+
+    # ---- vertical butt joints, staggered per strake (offset seams) ----------
+    wob_v = (_value_noise(h, w, h / 3.0, seed + 600) - 0.5) * 0.008
+    for i in range(strakes):
+        v0, v1 = float(edges[i]), float(edges[i + 1])
+        feather = 0.006
+        vmask = (np.clip((V - v0) / feather, 0, 1) *
+                 np.clip((v1 - V) / feather, 0, 1))       # fades at the strake welds
+        nj = max(2, int(round(frames * float(rng.uniform(0.7, 1.25)))))
+        jw = rng.uniform(0.7, 1.5, size=nj).astype(np.float32)  # uneven plate lengths
+        jw /= jw.sum()
+        jpos = np.cumsum(jw)[:-1]                         # interior joints in (0,1)
+        phase = float(rng.random())                       # brickwork stagger offset
+        for p in jpos:
+            u = (float(p) + phase) % 1.0
+            gwh = gw * float(rng.uniform(0.8, 1.15))
+            _stamp(*_seam(U, u + wob_v, gwh, 0.8, 0.4, vmask=vmask))
     return groove, bead
 
 
@@ -180,6 +209,52 @@ def _streaks(h, w, seed, count, spread=1.0):
         strg = float(rng.uniform(0.25, 0.7))
         out = np.maximum(out, fall * vmask * strg)
     return np.clip(out, 0, 1)
+
+
+# --------------------------------------------------------------------------
+# ZONED rust bleed: anchored to a scattered set of deck-edge fittings/scuppers
+# (and the odd heavy one standing in for the anchor hawse), each dropping 1..3
+# vertical streaks whose strength is driven by the weathering zone under it — so
+# rust concentrates in patches instead of washing evenly down the whole side.
+# --------------------------------------------------------------------------
+def _rust_streaks(h, w, seed, n_fittings, zone=None, strength=1.0):
+    rng = np.random.default_rng(seed + 91)
+    xx = (np.arange(w, dtype=np.float32) / w)[None, :]
+    yy = (np.arange(h, dtype=np.float32) / h)[:, None]
+    wob = _value_noise(h, w, h / 6.0, seed + 3) * 0.03
+    out = np.zeros((h, w), dtype=np.float32)
+    for _ in range(max(1, int(n_fittings))):
+        fx = float(rng.uniform(0.02, 0.98))
+        if zone is not None:
+            zi = int(min(max(fx, 0.0), 0.999) * w)
+            zw = float(zone[:, zi].mean())
+        else:
+            zw = 0.6
+        drip = zw ** 1.4
+        if rng.random() < 0.35:
+            drip *= 0.22                       # a well-maintained (clean) fitting
+        y0 = float(rng.uniform(-0.05, 0.32))   # originates high — deck edge/scupper
+        for _d in range(int(rng.integers(1, 4))):
+            x = fx + float(rng.uniform(-0.02, 0.02))
+            wdt = float(rng.uniform(0.0025, 0.010))
+            length = float(rng.uniform(0.30, 0.78))
+            fall = np.exp(-((xx + wob - x) ** 2) / (2 * wdt ** 2))
+            vmask = np.clip((yy - y0) / max(length, 1e-3), 0, 1)
+            vmask = vmask * np.clip(1.0 - (yy - y0 - length) / 0.25, 0, 1)
+            strg = float(rng.uniform(0.28, 0.62)) * drip * (0.7 + 0.6 * strength)
+            out = np.maximum(out, fall * vmask * strg)
+    return np.clip(out, 0, 1)
+
+
+# --------------------------------------------------------------------------
+# Scattered paint-wear / primer patches, clustered where the weathering zone is
+# high. Restrained (a maintained warship) — capped well below full coverage.
+# --------------------------------------------------------------------------
+def _wear_patches(h, w, seed, zone, amount):
+    base = _fbm(h, w, w / 9.0, 4, seed)
+    patch = np.clip(base - 0.66, 0, 1) * 3.0
+    patch = patch * np.clip(zone * 1.25, 0, 1)
+    return np.clip(patch * amount, 0, 0.45)
 
 
 # --------------------------------------------------------------------------
@@ -218,35 +293,60 @@ def build_steel_set(size=512, seed=21, base_hex="6E7A85",
     base = hex_lin(base_hex)
     rgb = np.ones((h, w, 3), np.float32) * base[None, None, :]
 
-    # large-scale paint mottle + salt bleach
+    # large-scale weathering ZONE field — a few big blobs across the tile that
+    # decide where rust/salt/wear concentrate, so the hull carries broad tonal
+    # variation at distance instead of an even wash that flattens to flat grey.
+    zone = _fbm(h, w, w / 1.5, 3, seed + 200)
+    zone = (zone - zone.min()) / max(float(zone.max() - zone.min()), 1e-4)
+
+    # fine paint mottle + broad zone-driven light/dark drift (visible far off)
     mott = _fbm(h, w, w / 3.0, 4, seed + 10)
-    rgb *= (0.92 + mott[..., None] * 0.16)
-    salt = np.clip(_fbm(h, w, w / 2.2, 3, seed + 40) - 0.55, 0, 1) * 0.5
-    rgb += salt[..., None] * np.array([0.06, 0.065, 0.07], np.float32)[None, None, :]
+    rgb *= (0.93 + mott[..., None] * 0.14)
+    rgb *= (1.0 + (zone[..., None] - 0.5) * 0.26)
+
+    # zoned salt bleaching: cool, desaturated, strongest low on the topsides
+    # (near the boot-top / waterline after tiling) and inside weathered zones
+    yy = (np.arange(h, dtype=np.float32) / h)[:, None]
+    wl_band = np.clip(1.0 - yy / 0.42, 0, 1) ** 1.5
+    salt = np.clip(_fbm(h, w, w / 2.4, 3, seed + 40) - 0.42, 0, 1)
+    salt = salt * (0.28 + 0.72 * wl_band) * (0.45 + zone)
+    salt = np.clip(salt, 0, 1) * 0.85
+    rgb += salt[..., None] * np.array([0.12, 0.13, 0.145], np.float32)[None, None, :]
 
     groove, bead = _plate_seams(h, w, strakes, frames, seed)
     rgb *= (1.0 - groove[..., None] * 0.42)          # seams read as dark recesses
     rgb += bead[..., None] * 0.05                     # faint weld-bead highlight
 
-    # rust streaks under seams/fittings — brown multiply
-    st = _streaks(h, w, seed, count=int(18 * rust))
+    # zoned rust: streaks under deck-edge scuppers/fittings (+ the odd hawse-heavy
+    # one), concentrated by the zone field rather than an even brown wash
+    st = _rust_streaks(h, w, seed, n_fittings=max(4, int(9 * (0.45 + rust))),
+                       zone=zone, strength=rust)
     rust_lin = hex_lin("4a2d1c")
     stc = st[..., None]
-    rgb = rgb * (1.0 - stc * 0.7) + rust_lin[None, None, :] * stc * 0.7
-    # a few darker grime dabs
+    rgb = rgb * (1.0 - stc * 0.72) + rust_lin[None, None, :] * stc * 0.72
+
+    # scattered paint-wear patches (clustered in weathered zones): topcoat worn
+    # to a lighter faded undercoat, so they read as pale patches, not more rust
+    wear = _wear_patches(h, w, seed + 88, zone, amount=0.7 * rust)
+    primer = hex_lin("8c8478")
+    wc = wear[..., None]
+    rgb = rgb * (1.0 - wc) + primer[None, None, :] * wc
+
+    # a few darker grime dabs, zone-weighted
     grime = np.clip(_fbm(h, w, w / 8.0, 4, seed + 77) - 0.62, 0, 1) * 1.4
-    rgb *= (1.0 - grime[..., None] * 0.30)
+    grime = grime * (0.4 + 1.1 * zone)
+    rgb *= (1.0 - grime[..., None] * 0.28)
     rgb = np.clip(rgb, 0, 1)
 
-    # roughness: paint ~0.55, seams+streaks+grime rougher, salt patches too
+    # roughness: paint ~0.52, seams+streaks+grime+wear rougher, salt patches too
     rough = np.full((h, w), 0.52, np.float32)
-    rough += groove * 0.16 + st * 0.22 + grime * 0.18 + salt * 0.12
+    rough += groove * 0.16 + st * 0.22 + grime * 0.18 + salt * 0.14 + wear * 0.30
     rough -= (mott - 0.5) * 0.08
-    rough = np.clip(rough, 0.4, 0.9)
+    rough = np.clip(rough, 0.4, 0.94)
     orm = np.stack([np.ones_like(rough), rough, np.zeros_like(rough)], 2)
 
     micro = (_fbm(h, w, 5.0, 3, seed + 5) - 0.5) * 0.15
-    height = -groove * 1.0 + bead * 0.5 - st * 0.12 + micro
+    height = -groove * 1.0 + bead * 0.5 - st * 0.12 - wear * 0.10 + micro
     nrm = _normal_from_height(height, strength=2.4)
 
     return {
